@@ -1,0 +1,81 @@
+<html lang='es'>
+  <head>
+    <meta charset='utf-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+    <title>Verifica tu email</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #f4f4f4;
+      }
+      .container {
+        background-color: #ffffff;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        color: #2c3e50;
+        margin-top: 0;
+      }
+      .button {
+        display: inline-block;
+        background-color: #4caf50;
+        color: white;
+        padding: 12px 30px;
+        text-decoration: none;
+        border-radius: 5px;
+        margin: 20px 0;
+        font-weight: bold;
+      }
+      .button:hover {
+        background-color: #45a049;
+      }
+      .footer {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #eee;
+        font-size: 12px;
+        color: #777;
+      }
+      .url-box {
+        background-color: #f9f9f9;
+        padding: 15px;
+        border-radius: 5px;
+        word-break: break-all;
+        font-size: 12px;
+        margin: 15px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class='container'>
+      <h1>¡Bienvenido a FinanzApp! 🎉</h1>
+      <p>Gracias por registrarte. Para completar tu registro, por favor verifica
+        tu dirección de email haciendo clic en el siguiente botón:</p>
+
+      <div style='text-align: center;'>
+        <a href='{{verificationUrl}}' class='button'>Verificar Email</a>
+      </div>
+
+      <p>O copia y pega este enlace en tu navegador:</p>
+      <div class='url-box'>{{verificationUrl}}</div>
+
+      <p><strong>Importante:</strong>
+        Este enlace expirará en 24 horas por seguridad.</p>
+
+      <p>Si no creaste una cuenta en FinanzApp, puedes ignorar este email de
+        forma segura.</p>
+
+      <div class='footer'>
+        <p>Este es un email automático, por favor no respondas a este mensaje.</p>
+        <p>&copy; {{currentYear}} FinanzApp. Todos los derechos reservados.</p>
+      </div>
+    </div>
+  </body>
+</html>
