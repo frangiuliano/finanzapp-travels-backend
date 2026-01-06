@@ -14,6 +14,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { AuthResponse } from './interfaces/jwt-payload.interface';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +22,7 @@ export class AuthService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
@@ -48,8 +50,10 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user);
 
-    // TODO: Enviar email de verificación (implementar servicio de email)
-    // await this.emailService.sendVerificationEmail(user.email, emailVerificationToken);
+    await this.notificationsService.sendVerificationEmail(
+      user.email,
+      emailVerificationToken,
+    );
 
     return {
       ...tokens,
@@ -179,15 +183,17 @@ export class AuthService {
     user.passwordResetExpires = resetExpires;
     await user.save({ validateBeforeSave: false });
 
-    // TODO: Enviar email con link de reset
-    // await this.emailService.sendPasswordResetEmail(user.email, resetToken);
+    await this.notificationsService.sendPasswordResetEmail(
+      user.email,
+      resetToken,
+    );
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
     const user = await this.userModel
       .findOne({
         passwordResetToken: token,
-        passwordResetExpires: { $gt: new Date() }, // token no expirado
+        passwordResetExpires: { $gt: new Date() },
       })
       .exec();
 
@@ -218,6 +224,11 @@ export class AuthService {
     user.emailVerified = true;
     user.emailVerificationToken = undefined;
     await user.save();
+
+    await this.notificationsService.sendWelcomeEmail(
+      user.email,
+      user.firstName,
+    );
   }
 
   async logout(userId: string, refreshToken: string): Promise<void> {
