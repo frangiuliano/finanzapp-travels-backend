@@ -4,32 +4,88 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
 import { NotificationsService } from './notifications.service';
 import { join } from 'path';
+import { existsSync } from 'fs';
 
 @Module({
   imports: [
     MailerModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        transport: {
-          host: configService.get('SMTP_HOST'),
-          port: configService.get('SMTP_PORT', 587),
-          secure: false,
-          auth: {
-            user: configService.get('SMTP_USER'),
-            pass: configService.get('SMTP_PASS'),
+      useFactory: (configService: ConfigService) => {
+        const host = configService.get<string>('SMTP_HOST');
+        const port = configService.get<number>('SMTP_PORT', 587);
+        const user = configService.get<string>('SMTP_USER');
+        const pass = configService.get<string>('SMTP_PASS');
+
+        if (!host || !user || !pass) {
+          console.warn(
+            '⚠️  Advertencia: Las credenciales SMTP no están completamente configuradas. ' +
+              'Verifica las variables de entorno: SMTP_HOST, SMTP_USER, SMTP_PASS',
+          );
+        }
+
+        const isGmail = host?.includes('gmail.com');
+
+        const cleanPass = pass?.replace(/\s/g, '');
+
+        if (isGmail) {
+          return {
+            transport: {
+              service: 'gmail',
+              auth: {
+                user,
+                pass: cleanPass,
+              },
+            },
+            defaults: {
+              from: `"${configService.get('APP_NAME', 'FinanzApp')}" <${configService.get('SMTP_FROM') || user}>`,
+            },
+            template: {
+              dir: (() => {
+                const distPath = join(__dirname, 'templates');
+                if (existsSync(distPath)) {
+                  return distPath;
+                }
+                return join(process.cwd(), 'src', 'notifications', 'templates');
+              })(),
+              adapter: new HandlebarsAdapter(),
+              options: {
+                strict: true,
+              },
+            },
+          };
+        }
+
+        const secure =
+          port === 465 || configService.get<boolean>('SMTP_SECURE', false);
+
+        return {
+          transport: {
+            host,
+            port,
+            secure,
+            auth: {
+              user,
+              pass: cleanPass,
+            },
           },
-        },
-        defaults: {
-          from: `"${configService.get('APP_NAME', 'FinanzApp')}" <${configService.get('SMTP_FROM')}>`,
-        },
-        template: {
-          dir: join(__dirname, 'templates'),
-          adapter: new HandlebarsAdapter(),
-          options: {
-            strict: true,
+          defaults: {
+            from: `"${configService.get('APP_NAME', 'FinanzApp')}" <${configService.get('SMTP_FROM') || user}>`,
           },
-        },
-      }),
+          template: {
+            dir: (() => {
+              const distPath = join(__dirname, 'templates');
+              if (existsSync(distPath)) {
+                return distPath;
+              }
+              return join(process.cwd(), 'src', 'notifications', 'templates');
+            })(),
+            adapter: new HandlebarsAdapter(),
+            options: {
+              strict: true,
+            },
+          },
+        };
+      },
       inject: [ConfigService],
     }),
   ],
