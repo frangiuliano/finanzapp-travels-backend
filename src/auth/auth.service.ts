@@ -218,7 +218,7 @@ export class AuthService {
     }
 
     if (user.emailVerified) {
-      throw new BadRequestException('El email ya ha sido verificado');
+      return;
     }
 
     user.emailVerified = true;
@@ -228,6 +228,27 @@ export class AuthService {
     await this.notificationsService.sendWelcomeEmail(
       user.email,
       user.firstName,
+    );
+  }
+
+  async resendVerificationEmail(userId: string): Promise<void> {
+    const user = await this.userModel.findById(userId).exec();
+
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+
+    if (user.emailVerified) {
+      throw new BadRequestException('El email ya ha sido verificado');
+    }
+
+    const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+    user.emailVerificationToken = emailVerificationToken;
+    await user.save({ validateBeforeSave: false });
+
+    await this.notificationsService.sendVerificationEmail(
+      user.email,
+      emailVerificationToken,
     );
   }
 

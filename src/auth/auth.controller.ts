@@ -132,6 +132,14 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  async resendVerification(@GetUser() user: UserDocument) {
+    await this.authService.resendVerificationEmail(user._id.toString());
+    return { message: 'Email de verificación reenviado exitosamente' };
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(
