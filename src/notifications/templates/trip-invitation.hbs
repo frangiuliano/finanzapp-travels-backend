@@ -1,0 +1,123 @@
+<html lang='es'>
+  <head>
+    <meta charset='utf-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+    <title>Te han invitado a un viaje - FinanzApp</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #f4f4f4;
+      }
+      .container {
+        background-color: #ffffff;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        color: #2c3e50;
+        margin-top: 0;
+      }
+      .trip-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 25px;
+        border-radius: 10px;
+        margin: 20px 0;
+        text-align: center;
+      }
+      .trip-card h2 {
+        margin: 0 0 10px 0;
+        font-size: 24px;
+      }
+      .trip-card p {
+        margin: 0;
+        opacity: 0.9;
+      }
+      .button {
+        display: inline-block;
+        background-color: #3498db;
+        color: white;
+        padding: 14px 35px;
+        text-decoration: none;
+        border-radius: 5px;
+        margin: 20px 0;
+        font-weight: bold;
+        font-size: 16px;
+      }
+      .button:hover {
+        background-color: #2980b9;
+      }
+      .info-box {
+        background-color: #f8f9fa;
+        border-left: 4px solid #3498db;
+        padding: 15px;
+        margin: 20px 0;
+        border-radius: 0 5px 5px 0;
+      }
+      .info-box p {
+        margin: 0;
+      }
+      .expiration {
+        color: #e74c3c;
+        font-weight: bold;
+      }
+      .footer {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #eee;
+        font-size: 12px;
+        color: #777;
+      }
+      .emoji {
+        font-size: 48px;
+        margin-bottom: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class='container'>
+      <div class='emoji'>✈️</div>
+      <h1>¡Te han invitado a un viaje!</h1>
+
+      <p><strong>{{inviterName}}</strong>
+        te ha invitado a unirte al siguiente viaje:</p>
+
+      <div class='trip-card'>
+        <h2>{{tripName}}</h2>
+        <p>Gestiona gastos compartidos fácilmente</p>
+      </div>
+
+      <p>Únete al viaje para poder registrar y compartir gastos con el grupo,
+        ver estadísticas y mantener todo organizado.</p>
+
+      <div style='text-align: center;'>
+        <a href='{{invitationUrl}}' class='button'>Aceptar invitación</a>
+      </div>
+
+      <div class='info-box'>
+        <p>⏰ Esta invitación
+          <span class='expiration'>expira el {{expirationDate}}</span></p>
+      </div>
+
+      <p>Si no esperabas esta invitación o no conoces a quien te la envió,
+        puedes ignorar este mensaje.</p>
+
+      <p>¡Nos vemos en el viaje! 🌍</p>
+
+      <p>Saludos,<br />El equipo de FinanzApp</p>
+
+      <div class='footer'>
+        <p>Este es un email automático, por favor no respondas a este mensaje.</p>
+        <p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
+        <p style='word-break: break-all;'>{{invitationUrl}}</p>
+        <p>&copy; {{currentYear}} FinanzApp. Todos los derechos reservados.</p>
+      </div>
+    </div>
+  </body>
+</html>

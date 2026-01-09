@@ -5,11 +5,14 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
+  private readonly frontendUrl: string;
 
   constructor(
     private mailerService: MailerService,
     private configService: ConfigService,
-  ) {}
+  ) {
+    this.frontendUrl = this.configService.get<string>('FRONTEND_URL') || '';
+  }
 
   async sendVerificationEmail(email: string, token: string): Promise<void> {
     try {
@@ -80,6 +83,53 @@ export class NotificationsService {
     } catch (error) {
       this.logger.error(
         `Error al enviar email de bienvenida a ${email}:`,
+        error,
+      );
+    }
+  }
+
+  async sendTripInvitationEmail(
+    email: string,
+    inviterName: string,
+    tripName: string,
+    token: string,
+  ): Promise<void> {
+    try {
+      const invitationUrl = `${this.frontendUrl}/trips/invitation/${token}`;
+      const currentYear = new Date().getFullYear();
+
+      // Calcular fecha de expiración (7 días desde ahora)
+      const expirationDate = new Date();
+      expirationDate.setDate(expirationDate.getDate() + 7);
+      const formattedExpirationDate = expirationDate.toLocaleDateString(
+        'es-ES',
+        {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        },
+      );
+
+      await this.mailerService.sendMail({
+        to: email,
+        subject: `${inviterName} te ha invitado a un viaje - FinanzApp`,
+        template: 'trip-invitation',
+        context: {
+          inviterName,
+          tripName,
+          invitationUrl,
+          expirationDate: formattedExpirationDate,
+          currentYear,
+        },
+      });
+
+      this.logger.log(
+        `Email de invitación a viaje enviado a ${email} para el viaje "${tripName}"`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error al enviar email de invitación a ${email}:`,
         error,
       );
     }
