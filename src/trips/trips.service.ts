@@ -6,7 +6,7 @@ import {
   Participant,
   ParticipantDocument,
   ParticipantRole,
-} from './participant.schema';
+} from '../participants/schemas/participant.schema';
 import { CreateTripDto } from './dto/create-trip.dto';
 
 @Injectable()

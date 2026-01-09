@@ -27,5 +27,4 @@ export type ParticipantDocument = Participant & Document;
 
 export const ParticipantSchema = SchemaFactory.createForClass(Participant);
 
-// Índice único para evitar duplicados de usuario en el mismo viaje
 ParticipantSchema.index({ tripId: 1, userId: 1 }, { unique: true });
