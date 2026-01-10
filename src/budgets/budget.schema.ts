@@ -17,6 +17,9 @@ export class Budget {
   @Prop({ required: true, default: 'USD' })
   currency: string;
 
+  @Prop({ type: Number, default: 0, min: 0 })
+  spent: number;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 
