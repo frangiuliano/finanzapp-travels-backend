@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsIn,
 } from 'class-validator';
+import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
 
 export class CreateTripDto {
   @IsNotEmpty({ message: 'El nombre del viaje es obligatorio' })
@@ -18,7 +19,7 @@ export class CreateTripDto {
 
   @IsOptional()
   @IsString({ message: 'La moneda debe ser texto' })
-  @IsIn(['USD', 'EUR', 'ARS', 'BRL', 'MXN', 'COP', 'CLP', 'PEN'], {
+  @IsIn(SUPPORTED_CURRENCIES, {
     message: 'Moneda no válida',
   })
   baseCurrency?: string;

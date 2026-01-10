@@ -1,5 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+// Note: default value matches DEFAULT_CURRENCY from common/constants/currencies.ts
+// Cannot use constant here as it's a runtime default in Mongoose schema
 
 @Schema({ timestamps: true })
 export class Trip {
