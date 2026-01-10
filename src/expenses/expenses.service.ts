@@ -24,6 +24,102 @@ import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 
+interface PopulatedUser {
+  _id: Types.ObjectId;
+  firstName: string;
+  lastName: string;
+  email?: string;
+}
+
+interface PopulatedParticipant {
+  _id: Types.ObjectId;
+  guestName?: string;
+  guestEmail?: string;
+  userId?: PopulatedUser | Types.ObjectId;
+}
+
+interface PopulatedBudget {
+  _id: Types.ObjectId;
+  name: string;
+}
+
+interface PopulatedExpenseSplit {
+  participantId: PopulatedParticipant | Types.ObjectId;
+  amount: number;
+  percentage?: number;
+}
+
+interface PopulatedExpense {
+  _id: Types.ObjectId;
+  tripId: Types.ObjectId;
+  budgetId?: PopulatedBudget | Types.ObjectId;
+  amount: number;
+  currency: string;
+  description: string;
+  merchantName?: string;
+  tags?: string[];
+  category?: string;
+  paidByParticipantId?: PopulatedParticipant | Types.ObjectId;
+  paidByThirdParty?: {
+    name: string;
+    email?: string;
+  };
+  status: ExpenseStatus;
+  isDivisible: boolean;
+  splitType?: SplitType;
+  splits?: PopulatedExpenseSplit[];
+  createdBy: PopulatedUser | Types.ObjectId;
+  expenseDate: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+function isPopulatedUser(
+  value: PopulatedUser | Types.ObjectId,
+): value is PopulatedUser {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Types.ObjectId) &&
+    'firstName' in value
+  );
+}
+
+function isPopulatedParticipant(
+  value: PopulatedParticipant | Types.ObjectId,
+): value is PopulatedParticipant {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Types.ObjectId) &&
+    '_id' in value &&
+    !('firstName' in value)
+  );
+}
+
+function isPopulatedBudget(
+  value: PopulatedBudget | Types.ObjectId,
+): value is PopulatedBudget {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Types.ObjectId) &&
+    'name' in value
+  );
+}
+
+function objectIdToString(id: Types.ObjectId | string | undefined): string {
+  if (!id) return '';
+  if (typeof id === 'string') return id;
+  if (id instanceof Types.ObjectId) return id.toString();
+  if (typeof id === 'object' && id !== null && '_id' in id) {
+    const innerId = (id as { _id: unknown })._id;
+    if (innerId instanceof Types.ObjectId) return innerId.toString();
+    if (typeof innerId === 'string') return innerId;
+  }
+  return String(id);
+}
+
 @Injectable()
 export class ExpensesService {
   private readonly logger = new Logger(ExpensesService.name);
@@ -123,7 +219,6 @@ export class ExpensesService {
 
     const isDivisible = createExpenseDto.isDivisible ?? false;
 
-    // Validar lógica de división
     if (isDivisible) {
       if (!createExpenseDto.splitType || !createExpenseDto.splits) {
         throw new BadRequestException(
@@ -137,7 +232,6 @@ export class ExpensesService {
         );
       }
     } else {
-      // Si no es divisible, no debe tener splits
       if (createExpenseDto.splits && createExpenseDto.splits.length > 0) {
         throw new BadRequestException(
           'Un gasto no divisible no debe tener divisiones',
@@ -242,7 +336,21 @@ export class ExpensesService {
       `Gasto creado: ${savedExpense.description} (${savedExpense.amount} ${savedExpense.currency}) en el viaje ${createExpenseDto.tripId}`,
     );
 
-    return savedExpense;
+    const populatedExpense = await this.expenseModel
+      .findById(savedExpense._id)
+      .populate({
+        path: 'paidByParticipantId',
+        select: '_id guestName guestEmail',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName email',
+        },
+      })
+      .populate('createdBy', 'firstName lastName email')
+      .populate('budgetId', '_id name')
+      .lean();
+
+    return this.transformExpense(populatedExpense);
   }
 
   async findAll(
@@ -278,22 +386,43 @@ export class ExpensesService {
 
     const expenses = await this.expenseModel
       .find(query)
-      .populate('paidByParticipantId', 'userId guestName guestEmail')
+      .populate({
+        path: 'paidByParticipantId',
+        select: '_id guestName guestEmail',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName email',
+        },
+      })
       .populate('createdBy', 'firstName lastName email')
-      .populate('budgetId', 'name')
+      .populate('budgetId', '_id name')
       .sort({ expenseDate: -1, createdAt: -1 })
       .lean();
 
-    return expenses;
+    return this.transformExpenses(expenses);
   }
 
   async findOne(id: string, userId: string): Promise<Expense> {
     const expense = await this.expenseModel
       .findById(id)
-      .populate('paidByParticipantId', 'userId guestName guestEmail')
-      .populate('splits.participantId', 'userId guestName guestEmail')
+      .populate({
+        path: 'paidByParticipantId',
+        select: '_id guestName guestEmail',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName email',
+        },
+      })
+      .populate({
+        path: 'splits.participantId',
+        select: '_id guestName guestEmail',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName email',
+        },
+      })
       .populate('createdBy', 'firstName lastName email')
-      .populate('budgetId', 'name')
+      .populate('budgetId', '_id name')
       .lean();
 
     if (!expense) {
@@ -311,7 +440,7 @@ export class ExpensesService {
       );
     }
 
-    return expense;
+    return this.transformExpense(expense);
   }
 
   async update(
@@ -372,14 +501,12 @@ export class ExpensesService {
     const newAmount = updateExpenseDto.amount || expense.amount;
     let processedSplits: ExpenseSplit[] | undefined = expense.splits;
 
-    // Validar lógica de división
     const isChangingDivisibility = expense.isDivisible !== isDivisible;
     const isUpdatingSplits =
       updateExpenseDto.splits !== undefined ||
       updateExpenseDto.splitType !== undefined;
 
     if (isDivisible) {
-      // Si cambió a divisible o se están actualizando splits, debe tener splits válidos
       if (isChangingDivisibility || isUpdatingSplits) {
         if (
           !updateExpenseDto.splitType ||
@@ -442,7 +569,6 @@ export class ExpensesService {
           }
         }
 
-        // Validar que los participantes pertenezcan al viaje
         const splitParticipantIds = processedSplits.map((s) => s.participantId);
         const validParticipantIds = tripParticipants.map((p) => p._id);
 
@@ -454,15 +580,12 @@ export class ExpensesService {
           }
         }
       } else {
-        // No se está actualizando la división, mantener la actual
         if (!expense.splits || expense.splits.length === 0) {
           throw new BadRequestException(
             'Un gasto divisible debe tener divisiones',
           );
         }
-        // Mantener splits existentes pero recalcular si cambió el monto
         if (updateExpenseDto.amount !== undefined) {
-          // Si cambió el monto, recalcular splits proporcionalmente
           const oldAmount = expense.amount;
           const ratio = newAmount / oldAmount;
           processedSplits = expense.splits.map((split) => ({
@@ -474,7 +597,6 @@ export class ExpensesService {
         }
       }
     } else {
-      // Si no es divisible, no debe tener splits
       if (
         updateExpenseDto.splits !== undefined &&
         updateExpenseDto.splits.length > 0
@@ -510,17 +632,14 @@ export class ExpensesService {
     expense.updatedAt = new Date();
     const updatedExpense = await expense.save();
 
-    // Actualizar spent del budget solo si hay cambios en amount o budgetId
     if (
       updateExpenseDto.amount !== undefined ||
       updateExpenseDto.budgetId !== undefined
     ) {
-      // Revertir el spent del budget anterior
       if (expense.budgetId) {
         await this.updateBudgetSpent(expense.budgetId.toString(), -oldAmount);
       }
 
-      // Actualizar el spent del nuevo budget (o el mismo si no cambió)
       if (updatedExpense.budgetId) {
         await this.updateBudgetSpent(
           updatedExpense.budgetId.toString(),
@@ -531,7 +650,29 @@ export class ExpensesService {
 
     this.logger.log(`Gasto actualizado: ${id}`);
 
-    return updatedExpense;
+    const populatedExpense = await this.expenseModel
+      .findById(updatedExpense._id)
+      .populate({
+        path: 'paidByParticipantId',
+        select: '_id guestName guestEmail',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName email',
+        },
+      })
+      .populate({
+        path: 'splits.participantId',
+        select: '_id guestName guestEmail',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName email',
+        },
+      })
+      .populate('createdBy', 'firstName lastName email')
+      .populate('budgetId', '_id name')
+      .lean();
+
+    return this.transformExpense(populatedExpense);
   }
 
   async remove(id: string, userId: string): Promise<void> {
@@ -605,7 +746,6 @@ export class ExpensesService {
     const budgetMap = new Map<string, { name: string; total: number }>();
     expenses.forEach((exp) => {
       if (!exp.budgetId) {
-        // Gastos sin presupuesto se agrupan como "Sin presupuesto"
         const current = budgetMap.get('sin-presupuesto') || {
           name: 'Sin presupuesto',
           total: 0,
@@ -885,7 +1025,196 @@ export class ExpensesService {
 
     this.logger.log(`Gasto marcado como saldado: ${id}`);
 
-    return updatedExpense;
+    const populatedExpense = await this.expenseModel
+      .findById(updatedExpense._id)
+      .populate({
+        path: 'paidByParticipantId',
+        select: '_id guestName guestEmail',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName email',
+        },
+      })
+      .populate({
+        path: 'splits.participantId',
+        select: '_id guestName guestEmail',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName email',
+        },
+      })
+      .populate('createdBy', 'firstName lastName email')
+      .populate('budgetId', '_id name')
+      .lean();
+
+    return this.transformExpense(populatedExpense);
+  }
+
+  private transformExpense(expense: unknown): Expense {
+    if (!expense) return expense as Expense;
+
+    const expenseRecord = expense as PopulatedExpense;
+    const transformed: Record<string, unknown> = {
+      ...expenseRecord,
+    };
+
+    transformed._id = objectIdToString(expenseRecord._id);
+    transformed.tripId = objectIdToString(expenseRecord.tripId);
+
+    if (expenseRecord.budgetId) {
+      if (isPopulatedBudget(expenseRecord.budgetId)) {
+        transformed.budget = {
+          _id: objectIdToString(expenseRecord.budgetId._id),
+          name: expenseRecord.budgetId.name,
+        };
+        transformed.budgetId = objectIdToString(expenseRecord.budgetId._id);
+      } else {
+        transformed.budgetId = objectIdToString(expenseRecord.budgetId);
+      }
+    }
+
+    if (isPopulatedUser(expenseRecord.createdBy)) {
+      transformed.createdBy = {
+        _id: objectIdToString(expenseRecord.createdBy._id),
+        firstName: expenseRecord.createdBy.firstName,
+        lastName: expenseRecord.createdBy.lastName,
+        email: expenseRecord.createdBy.email,
+      };
+    } else {
+      transformed.createdBy = {
+        _id: objectIdToString(expenseRecord.createdBy),
+        firstName: '',
+        lastName: '',
+      };
+    }
+
+    if (expenseRecord.paidByParticipantId) {
+      if (isPopulatedParticipant(expenseRecord.paidByParticipantId)) {
+        const participant = expenseRecord.paidByParticipantId;
+        const participantData: {
+          _id: string;
+          userId?:
+            | {
+                _id: string;
+                firstName: string;
+                lastName: string;
+                email?: string;
+              }
+            | string;
+          guestName?: string;
+          guestEmail?: string;
+        } = {
+          _id: objectIdToString(participant._id),
+        };
+
+        if (participant.userId) {
+          if (isPopulatedUser(participant.userId)) {
+            participantData.userId = {
+              _id: objectIdToString(participant.userId._id),
+              firstName: participant.userId.firstName,
+              lastName: participant.userId.lastName,
+              email: participant.userId.email,
+            };
+          } else {
+            participantData.userId = objectIdToString(participant.userId);
+          }
+        }
+
+        if (participant.guestName) {
+          participantData.guestName = participant.guestName;
+        }
+
+        if (participant.guestEmail) {
+          participantData.guestEmail = participant.guestEmail;
+        }
+
+        transformed.paidByParticipant = participantData;
+        transformed.paidByParticipantId = objectIdToString(participant._id);
+      } else {
+        transformed.paidByParticipantId = objectIdToString(
+          expenseRecord.paidByParticipantId,
+        );
+      }
+    }
+
+    if (expenseRecord.splits && Array.isArray(expenseRecord.splits)) {
+      transformed.splits = expenseRecord.splits.map((split) => {
+        const splitData: {
+          participantId: string;
+          amount: number;
+          percentage?: number;
+          participant?: {
+            _id: string;
+            userId?:
+              | {
+                  _id: string;
+                  firstName: string;
+                  lastName: string;
+                  email?: string;
+                }
+              | string;
+            guestName?: string;
+            guestEmail?: string;
+          };
+        } = {
+          participantId: isPopulatedParticipant(split.participantId)
+            ? objectIdToString(split.participantId._id)
+            : objectIdToString(split.participantId),
+          amount: split.amount,
+          percentage: split.percentage,
+        };
+
+        if (isPopulatedParticipant(split.participantId)) {
+          const participant = split.participantId;
+          const participantData: {
+            _id: string;
+            userId?:
+              | {
+                  _id: string;
+                  firstName: string;
+                  lastName: string;
+                  email?: string;
+                }
+              | string;
+            guestName?: string;
+            guestEmail?: string;
+          } = {
+            _id: objectIdToString(participant._id),
+          };
+
+          if (participant.userId) {
+            if (isPopulatedUser(participant.userId)) {
+              participantData.userId = {
+                _id: objectIdToString(participant.userId._id),
+                firstName: participant.userId.firstName,
+                lastName: participant.userId.lastName,
+                email: participant.userId.email,
+              };
+            } else {
+              participantData.userId = objectIdToString(participant.userId);
+            }
+          }
+
+          if (participant.guestName) {
+            participantData.guestName = participant.guestName;
+          }
+
+          if (participant.guestEmail) {
+            participantData.guestEmail = participant.guestEmail;
+          }
+
+          splitData.participant = participantData;
+        }
+
+        return splitData;
+      });
+    }
+
+    return transformed as unknown as Expense;
+  }
+
+  private transformExpenses(expenses: any[]): Expense[] {
+    return expenses.map((expense) => this.transformExpense(expense));
   }
 
   private async updateBudgetSpent(
