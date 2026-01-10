@@ -140,17 +140,15 @@ export class AuthService {
       '30d',
     );
 
-    // Note: Using 'as any' is necessary due to type incompatibility
-    // between ConfigService return type and JwtSignOptions.expiresIn
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtSecret,
-      expiresIn: accessTokenExpiresIn as string | number,
-    } as any);
+      expiresIn: accessTokenExpiresIn,
+    });
 
     const refreshToken = this.jwtService.sign(payload, {
       secret: jwtRefreshSecret,
-      expiresIn: refreshTokenExpiresIn as string | number,
-    } as any);
+      expiresIn: refreshTokenExpiresIn,
+    });
 
     if (!user.refreshTokens) {
       user.refreshTokens = [];

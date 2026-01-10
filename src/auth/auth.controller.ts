@@ -79,7 +79,8 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const refreshToken = req.cookies?.refreshToken;
+    const cookies = req.cookies as Record<string, string> | undefined;
+    const refreshToken = cookies?.refreshToken;
 
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token no encontrado');
@@ -147,7 +148,8 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const refreshToken = req.cookies?.refreshToken;
+    const cookies = req.cookies as Record<string, string> | undefined;
+    const refreshToken = cookies?.refreshToken;
 
     if (refreshToken) {
       await this.authService.logout(user._id.toString(), refreshToken);
