@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { TripsModule } from './trips/trips.module';
 import { ParticipantsModule } from './participants/participants.module';
 import { BudgetsModule } from './budgets/budgets.module';
+import { ExpensesModule } from './expenses/expenses.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { BudgetsModule } from './budgets/budgets.module';
     TripsModule,
     ParticipantsModule,
     BudgetsModule,
+    ExpensesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
