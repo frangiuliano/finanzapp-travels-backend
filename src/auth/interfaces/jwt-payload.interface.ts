@@ -5,6 +5,8 @@ export interface JwtPayload {
   exp?: number;
 }
 
+export type JwtSignPayload = Omit<JwtPayload, 'iat' | 'exp'>;
+
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;

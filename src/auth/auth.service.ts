@@ -6,14 +6,17 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { JwtService } from '@nestjs/jwt';
+import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { User, UserDocument } from '../users/user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { JwtPayload } from './interfaces/jwt-payload.interface';
-import { AuthResponse } from './interfaces/jwt-payload.interface';
+import {
+  JwtPayload,
+  JwtSignPayload,
+  AuthResponse,
+} from './interfaces/jwt-payload.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -118,7 +121,7 @@ export class AuthService {
   private async generateTokens(
     user: UserDocument,
   ): Promise<{ accessToken: string; refreshToken: string }> {
-    const payload: JwtPayload = {
+    const payload: JwtSignPayload = {
       sub: user._id.toString(),
       email: user.email,
     };
@@ -140,15 +143,19 @@ export class AuthService {
       '30d',
     );
 
-    const accessToken = this.jwtService.sign(payload, {
+    const accessTokenOptions = {
       secret: jwtSecret,
       expiresIn: accessTokenExpiresIn,
-    });
+    } as JwtSignOptions;
 
-    const refreshToken = this.jwtService.sign(payload, {
+    const refreshTokenOptions = {
       secret: jwtRefreshSecret,
       expiresIn: refreshTokenExpiresIn,
-    });
+    } as JwtSignOptions;
+
+    const accessToken = this.jwtService.sign(payload, accessTokenOptions);
+
+    const refreshToken = this.jwtService.sign(payload, refreshTokenOptions);
 
     if (!user.refreshTokens) {
       user.refreshTokens = [];
