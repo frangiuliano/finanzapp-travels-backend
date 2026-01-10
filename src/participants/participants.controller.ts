@@ -14,7 +14,7 @@ import {
   InviteParticipantDto,
   AddGuestParticipantDto,
   SendInvitationToGuestDto,
-} from './dto';
+} from './dto/index';
 import { InvitationDocument } from './schemas/invitation.schema';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { GetUserOptional } from '../auth/decorators/get-user-optional.decorator';

@@ -1,3 +1,3 @@
-export * from './invite-participant.dto';
-export * from './add-guest-participant.dto';
-export * from './send-invitation-to-guest.dto';
+export { InviteParticipantDto } from './invite-participant.dto';
+export { AddGuestParticipantDto } from './add-guest-participant.dto';
+export { SendInvitationToGuestDto } from './send-invitation-to-guest.dto';
