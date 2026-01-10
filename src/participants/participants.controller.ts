@@ -7,14 +7,22 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { ParticipantsService } from './participants.service';
-import { InviteParticipantDto } from './dto';
+import {
+  InviteParticipantDto,
+  AddGuestParticipantDto,
+  SendInvitationToGuestDto,
+} from './dto';
+import { InvitationDocument } from './schemas/invitation.schema';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { GetUserOptional } from '../auth/decorators/get-user-optional.decorator';
 import { Public } from '../auth/decorators/public.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('participants')
+@UseGuards(JwtAuthGuard)
 export class ParticipantsController {
   constructor(private readonly participantsService: ParticipantsService) {}
 
@@ -24,7 +32,48 @@ export class ParticipantsController {
     @Body() inviteDto: InviteParticipantDto,
     @GetUser('_id') userId: string,
   ) {
-    return this.participantsService.inviteParticipant(inviteDto, userId);
+    const invitation = await this.participantsService.inviteParticipant(
+      inviteDto,
+      userId,
+    );
+    return {
+      message: 'Invitación enviada exitosamente',
+      invitation,
+    };
+  }
+
+  @Post('guest')
+  @HttpCode(HttpStatus.CREATED)
+  async addGuest(
+    @Body() dto: AddGuestParticipantDto,
+    @GetUser('_id') userId: string,
+  ) {
+    const participant = await this.participantsService.addGuestParticipant(
+      dto,
+      userId,
+    );
+    return {
+      message: 'Invitado añadido exitosamente',
+      participant,
+    };
+  }
+
+  @Post('guest/:participantId/invite')
+  @HttpCode(HttpStatus.CREATED)
+  async inviteGuest(
+    @Param('participantId') participantId: string,
+    @Body() dto: SendInvitationToGuestDto,
+    @GetUser('_id') userId: string,
+  ) {
+    const invitation = (await this.participantsService.sendInvitationToGuest(
+      participantId,
+      dto.email,
+      userId,
+    )) as InvitationDocument;
+    return {
+      message: 'Invitación enviada exitosamente al invitado',
+      invitation,
+    };
   }
 
   @Public()
@@ -57,7 +106,13 @@ export class ParticipantsController {
     @Param('tripId') tripId: string,
     @GetUser('_id') userId: string,
   ) {
-    return this.participantsService.findByTrip(tripId, userId);
+    const participants = await this.participantsService.findByTrip(
+      tripId,
+      userId,
+    );
+    return {
+      participants,
+    };
   }
 
   @Get('trip/:tripId/invitations')
@@ -68,16 +123,16 @@ export class ParticipantsController {
     return this.participantsService.getPendingInvitations(tripId, userId);
   }
 
-  @Delete('trip/:tripId/user/:participantUserId')
+  @Delete('trip/:tripId/participant/:participantId')
   @HttpCode(HttpStatus.NO_CONTENT)
   async removeParticipant(
     @Param('tripId') tripId: string,
-    @Param('participantUserId') participantUserId: string,
+    @Param('participantId') participantId: string,
     @GetUser('_id') userId: string,
   ) {
-    return this.participantsService.removeParticipant(
+    await this.participantsService.removeParticipant(
       tripId,
-      participantUserId,
+      participantId,
       userId,
     );
   }
