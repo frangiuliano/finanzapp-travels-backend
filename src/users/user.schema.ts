@@ -36,6 +36,9 @@ export class User {
 
   @Prop({ type: [String], default: [], select: false })
   refreshTokens?: string[];
+
+  @Prop({ type: Number, unique: true, sparse: true })
+  telegramUserId?: number;
 }
 
 export type UserDocument = User &
