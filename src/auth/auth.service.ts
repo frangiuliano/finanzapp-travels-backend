@@ -99,8 +99,12 @@ export class AuthService {
 
       const user = await this.userModel.findById(payload.sub).exec();
 
-      if (!user || !user.isActive) {
-        throw new UnauthorizedException('Usuario no encontrado o inactivo');
+      if (!user) {
+        throw new UnauthorizedException('Usuario no encontrado');
+      }
+
+      if (!user.isActive) {
+        throw new UnauthorizedException('Tu cuenta ha sido desactivada');
       }
 
       if (!user.refreshTokens?.includes(refreshToken)) {
@@ -113,8 +117,22 @@ export class AuthService {
         ...tokens,
         user: this.sanitizeUser(user),
       };
-    } catch {
-      throw new UnauthorizedException('Refresh token inválido o expirado');
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+
+      if (error && typeof error === 'object' && 'name' in error) {
+        const errorWithName = error as { name: string };
+        if (
+          errorWithName.name === 'TokenExpiredError' ||
+          errorWithName.name === 'JsonWebTokenError'
+        ) {
+          throw new UnauthorizedException('Refresh token inválido o expirado');
+        }
+      }
+
+      throw new UnauthorizedException('Error al refrescar el token');
     }
   }
 
