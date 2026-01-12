@@ -8,6 +8,7 @@ import { TripsModule } from './trips/trips.module';
 import { ParticipantsModule } from './participants/participants.module';
 import { BudgetsModule } from './budgets/budgets.module';
 import { ExpensesModule } from './expenses/expenses.module';
+import { BotModule } from './bot/bot.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { ExpensesModule } from './expenses/expenses.module';
     ParticipantsModule,
     BudgetsModule,
     ExpensesModule,
+    BotModule,
   ],
   controllers: [AppController],
   providers: [AppService],
