@@ -601,4 +601,46 @@ export class ParticipantsService {
 
     return invitation;
   }
+
+  async findUserParticipant(
+    tripId: string,
+    userId: string,
+  ): Promise<Participant | null> {
+    return this.participantModel
+      .findOne({
+        tripId: new Types.ObjectId(tripId),
+        userId: new Types.ObjectId(userId),
+      })
+      .populate('userId', 'firstName lastName email')
+      .lean();
+  }
+
+  async findOne(
+    participantId: string,
+    tripId: string,
+    userId: string,
+  ): Promise<Participant> {
+    const userParticipant = await this.participantModel.findOne({
+      tripId: new Types.ObjectId(tripId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (!userParticipant) {
+      throw new ForbiddenException('No tienes acceso a este viaje');
+    }
+
+    const participant = await this.participantModel
+      .findOne({
+        _id: new Types.ObjectId(participantId),
+        tripId: new Types.ObjectId(tripId),
+      })
+      .populate('userId', 'firstName lastName email')
+      .lean();
+
+    if (!participant) {
+      throw new NotFoundException('Participante no encontrado');
+    }
+
+    return participant;
+  }
 }

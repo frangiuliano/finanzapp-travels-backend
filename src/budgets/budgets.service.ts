@@ -136,4 +136,8 @@ export class BudgetsService {
 
     await this.budgetModel.findByIdAndDelete(id);
   }
+
+  async findAll(tripId: string, userId: string): Promise<Budget[]> {
+    return this.findAllByTrip(tripId, userId);
+  }
 }
