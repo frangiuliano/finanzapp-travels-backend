@@ -2,11 +2,25 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import * as cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  app.useGlobalPipes(new ValidationPipe());
+  // Configurar Helmet para headers de seguridad
+  app.use(helmet());
+
+  // Configurar ValidationPipe más estricto
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true, // Elimina propiedades no definidas en el DTO
+      forbidNonWhitelisted: true, // Rechaza requests con propiedades extra
+      transform: true, // Transforma los tipos automáticamente
+      transformOptions: {
+        enableImplicitConversion: true, // Convierte tipos implícitamente (ej: string a number)
+      },
+    }),
+  );
 
   const frontendUrl = process.env.FRONTEND_URL;
   const defaultOrigins = ['http://localhost:5173', 'http://localhost:3000'];
