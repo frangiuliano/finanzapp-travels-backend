@@ -36,6 +36,13 @@ export type ParticipantDocument = Participant & Document;
 
 export const ParticipantSchema = SchemaFactory.createForClass(Participant);
 
+ParticipantSchema.pre('save', function () {
+  if ((this.userId === null || this.userId === undefined) && this.guestName) {
+    this.set('userId', undefined, { strict: false });
+    delete this.userId;
+  }
+});
+
 ParticipantSchema.pre('validate', function () {
   if (!this.userId && !this.guestName) {
     const error = new Error(
@@ -57,7 +64,7 @@ ParticipantSchema.index(
   { tripId: 1, userId: 1 },
   {
     unique: true,
-    partialFilterExpression: { userId: { $exists: true } },
+    partialFilterExpression: { userId: { $exists: true } }, // Solo indexa documentos donde userId existe
   },
 );
 
