@@ -12,9 +12,9 @@ primary_region = "gru"  # gru = São Paulo (más cerca de LATAM), también puede
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = false  # ¡Importante! Evita que la máquina se detenga
+  auto_stop_machines = false 
   auto_start_machines = true
-  min_machines_running = 1    # Mantiene siempre al menos 1 máquina activa
+  min_machines_running = 1 
   processes = ["app"]
 
   [[http_service.checks]]
