@@ -42,33 +42,56 @@ export class ParticipantsService {
     private notificationsService: NotificationsService,
   ) {}
 
-  async inviteParticipant(
-    inviteDto: InviteParticipantDto,
-    invitedByUserId: string,
-  ): Promise<Invitation> {
-    const { tripId, email } = inviteDto;
-    const normalizedEmail = email.toLowerCase().trim();
-
+  private async ensureTripExists(tripId: string): Promise<TripDocument> {
     const trip = await this.tripModel.findById(tripId);
     if (!trip) {
       throw new NotFoundException('Viaje no encontrado');
     }
+    return trip;
+  }
 
-    const inviterParticipant = await this.participantModel.findOne({
+  private async ensureOwnerAccess(
+    tripId: string,
+    userId: string,
+  ): Promise<ParticipantDocument> {
+    const ownerParticipant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(tripId),
-      userId: new Types.ObjectId(invitedByUserId),
+      userId: new Types.ObjectId(userId),
       role: ParticipantRole.OWNER,
     });
 
-    if (!inviterParticipant) {
+    if (!ownerParticipant) {
       throw new ForbiddenException(
-        'Solo el propietario del viaje puede invitar participantes',
+        'Solo el propietario del viaje puede realizar esta acción',
       );
     }
 
+    return ownerParticipant;
+  }
+
+  private async ensureParticipantAccess(
+    tripId: string,
+    userId: string,
+  ): Promise<void> {
+    const participant = await this.participantModel.findOne({
+      tripId: new Types.ObjectId(tripId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (!participant) {
+      throw new ForbiddenException('No tienes acceso a este viaje');
+    }
+  }
+
+  private async checkExistingUserAndParticipant(
+    tripId: string,
+    email: string,
+  ): Promise<void> {
+    const normalizedEmail = email.toLowerCase().trim();
     const existingUser = await this.userModel.findOne({
       email: normalizedEmail,
     });
+
     if (existingUser) {
       const existingParticipant = await this.participantModel.findOne({
         tripId: new Types.ObjectId(tripId),
@@ -81,7 +104,13 @@ export class ParticipantsService {
         );
       }
     }
+  }
 
+  private async checkPendingInvitation(
+    tripId: string,
+    email: string,
+  ): Promise<void> {
+    const normalizedEmail = email.toLowerCase().trim();
     const existingInvitation = await this.invitationModel.findOne({
       tripId: new Types.ObjectId(tripId),
       email: normalizedEmail,
@@ -93,22 +122,43 @@ export class ParticipantsService {
         'Ya existe una invitación pendiente para este email',
       );
     }
+  }
+
+  private async createAndSendInvitation(
+    tripId: Types.ObjectId,
+    email: string,
+    requestingUserId: string,
+    guest?: ParticipantDocument,
+  ): Promise<InvitationDocument> {
+    const normalizedEmail = email.toLowerCase().trim();
 
     const token = randomBytes(32).toString('hex');
-
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
 
     const invitation = await this.invitationModel.create({
-      tripId: new Types.ObjectId(tripId),
+      tripId,
       email: normalizedEmail,
-      invitedBy: new Types.ObjectId(invitedByUserId),
+      invitedBy: new Types.ObjectId(requestingUserId),
       token,
       status: InvitationStatus.PENDING,
       expiresAt,
     });
 
-    const inviter = await this.userModel.findById(invitedByUserId);
+    if (guest) {
+      guest.invitationId = invitation._id;
+      if (!guest.guestEmail) {
+        guest.guestEmail = normalizedEmail;
+      }
+      await guest.save();
+    }
+
+    const inviter = await this.userModel.findById(requestingUserId);
+    const trip = await this.tripModel.findById(tripId);
+
+    if (!trip) {
+      throw new NotFoundException('Viaje no encontrado');
+    }
 
     await this.notificationsService.sendTripInvitationEmail(
       normalizedEmail,
@@ -120,6 +170,27 @@ export class ParticipantsService {
 
     this.logger.log(
       `Invitación enviada a ${normalizedEmail} para el viaje ${trip.name}`,
+    );
+
+    return invitation;
+  }
+
+  async inviteParticipant(
+    inviteDto: InviteParticipantDto,
+    invitedByUserId: string,
+  ): Promise<Invitation> {
+    const { tripId, email } = inviteDto;
+    const normalizedEmail = email.toLowerCase().trim();
+
+    await this.ensureTripExists(tripId);
+    await this.ensureOwnerAccess(tripId, invitedByUserId);
+    await this.checkExistingUserAndParticipant(tripId, email);
+    await this.checkPendingInvitation(tripId, email);
+
+    const invitation = await this.createAndSendInvitation(
+      new Types.ObjectId(tripId),
+      normalizedEmail,
+      invitedByUserId,
     );
 
     return invitation;
@@ -208,7 +279,6 @@ export class ParticipantsService {
       );
     }
 
-    // Buscar si existe un guest asociado a esta invitación
     const guest = await this.participantModel.findOne({
       tripId: invitation.tripId,
       invitationId: invitation._id,
@@ -216,10 +286,8 @@ export class ParticipantsService {
     });
 
     if (guest) {
-      // Convertir el guest en participant con cuenta
       guest.userId = user._id;
-      guest.invitationId = undefined; // Ya no es necesario
-      // Mantener guestName y guestEmail por si acaso, pero ahora tiene userId
+      guest.invitationId = undefined;
       await guest.save();
 
       await this.invitationModel.updateOne(
@@ -231,7 +299,6 @@ export class ParticipantsService {
         `Guest convertido en participant: ${guest.guestName || user.email} se unió al viaje ${invitation.tripId.toString()}`,
       );
 
-      // Populate userId para retornar el participant completo
       const participantWithUser = await this.participantModel
         .findById(guest._id)
         .populate('userId', 'firstName lastName email')
@@ -244,7 +311,6 @@ export class ParticipantsService {
       };
     }
 
-    // Si no hay guest, verificar si ya existe un participant con cuenta
     const existingParticipant = await this.participantModel.findOne({
       tripId: invitation.tripId,
       userId: user._id,
@@ -263,7 +329,6 @@ export class ParticipantsService {
       };
     }
 
-    // Si no hay guest ni participant existente, crear uno nuevo
     const participant = await this.participantModel.create({
       tripId: invitation.tripId,
       userId: user._id,
@@ -301,17 +366,7 @@ export class ParticipantsService {
       throw new NotFoundException('Invitación no encontrada');
     }
 
-    const ownerParticipant = await this.participantModel.findOne({
-      tripId: invitation.tripId,
-      userId: new Types.ObjectId(userId),
-      role: ParticipantRole.OWNER,
-    });
-
-    if (!ownerParticipant) {
-      throw new ForbiddenException(
-        'Solo el propietario del viaje puede cancelar invitaciones',
-      );
-    }
+    await this.ensureOwnerAccess(invitation.tripId.toString(), userId);
 
     if (invitation.status !== InvitationStatus.PENDING) {
       throw new BadRequestException(
@@ -326,14 +381,7 @@ export class ParticipantsService {
   }
 
   async findByTrip(tripId: string, userId: string): Promise<Participant[]> {
-    const userParticipant = await this.participantModel.findOne({
-      tripId: new Types.ObjectId(tripId),
-      userId: new Types.ObjectId(userId),
-    });
-
-    if (!userParticipant) {
-      throw new ForbiddenException('No tienes acceso a este viaje');
-    }
+    await this.ensureParticipantAccess(tripId, userId);
 
     const participants = await this.participantModel
       .find({ tripId: new Types.ObjectId(tripId) })
@@ -349,17 +397,7 @@ export class ParticipantsService {
     tripId: string,
     userId: string,
   ): Promise<Invitation[]> {
-    const ownerParticipant = await this.participantModel.findOne({
-      tripId: new Types.ObjectId(tripId),
-      userId: new Types.ObjectId(userId),
-      role: ParticipantRole.OWNER,
-    });
-
-    if (!ownerParticipant) {
-      throw new ForbiddenException(
-        'Solo el propietario puede ver las invitaciones pendientes',
-      );
-    }
+    await this.ensureOwnerAccess(tripId, userId);
 
     return this.invitationModel
       .find({
@@ -374,19 +412,8 @@ export class ParticipantsService {
     participantUserId: string,
     requestingUserId: string,
   ): Promise<void> {
-    const ownerParticipant = await this.participantModel.findOne({
-      tripId: new Types.ObjectId(tripId),
-      userId: new Types.ObjectId(requestingUserId),
-      role: ParticipantRole.OWNER,
-    });
+    await this.ensureOwnerAccess(tripId, requestingUserId);
 
-    if (!ownerParticipant) {
-      throw new ForbiddenException(
-        'Solo el propietario puede eliminar participantes',
-      );
-    }
-
-    // Buscar el participant por userId o por _id (para guests)
     const participantToRemove = await this.participantModel.findOne({
       $or: [
         {
@@ -404,7 +431,6 @@ export class ParticipantsService {
       throw new NotFoundException('Participante no encontrado');
     }
 
-    // Si tiene userId, verificar que no sea el mismo que solicita
     if (
       participantToRemove.userId &&
       participantToRemove.userId.toString() === requestingUserId
@@ -414,7 +440,6 @@ export class ParticipantsService {
       );
     }
 
-    // Si tiene una invitación pendiente, cancelarla
     if (participantToRemove.invitationId) {
       await this.invitationModel.updateOne(
         { _id: participantToRemove.invitationId },
@@ -429,23 +454,9 @@ export class ParticipantsService {
     dto: AddGuestParticipantDto,
     requestingUserId: string,
   ): Promise<ParticipantDocument> {
-    // Validar acceso al trip
-    const requester = await this.participantModel.findOne({
-      tripId: new Types.ObjectId(dto.tripId),
-      userId: new Types.ObjectId(requestingUserId),
-    });
+    await this.ensureParticipantAccess(dto.tripId, requestingUserId);
+    const trip = await this.ensureTripExists(dto.tripId);
 
-    if (!requester) {
-      throw new ForbiddenException('No tienes acceso a este viaje');
-    }
-
-    // Validar que el viaje existe
-    const trip = await this.tripModel.findById(dto.tripId);
-    if (!trip) {
-      throw new NotFoundException('Viaje no encontrado');
-    }
-
-    // Validar que no exista ya un guest con ese email (si se proporciona)
     if (dto.guestEmail) {
       const normalizedEmail = dto.guestEmail.toLowerCase().trim();
       const existingGuest = await this.participantModel.findOne({
@@ -460,32 +471,38 @@ export class ParticipantsService {
         );
       }
 
-      // Validar que no exista un usuario registrado con ese email
-      const existingUser = await this.userModel.findOne({
-        email: normalizedEmail,
-      });
-
-      if (existingUser) {
-        const existingParticipant = await this.participantModel.findOne({
-          tripId: new Types.ObjectId(dto.tripId),
-          userId: existingUser._id,
-        });
-
-        if (existingParticipant) {
-          throw new BadRequestException(
-            'Este usuario ya es participante del viaje. Usa la opción de invitar directamente.',
-          );
-        }
-      }
+      await this.checkExistingUserAndParticipant(dto.tripId, normalizedEmail);
     }
 
-    // Crear el guest participant
     const guest = await this.participantModel.create({
       tripId: new Types.ObjectId(dto.tripId),
       guestName: dto.guestName,
       guestEmail: dto.guestEmail?.toLowerCase().trim(),
       role: ParticipantRole.MEMBER,
     });
+
+    if (dto.guestEmail) {
+      const normalizedEmail = dto.guestEmail.toLowerCase().trim();
+
+      const existingInvitation = await this.invitationModel.findOne({
+        tripId: new Types.ObjectId(dto.tripId),
+        email: normalizedEmail,
+        status: InvitationStatus.PENDING,
+      });
+
+      if (!existingInvitation) {
+        await this.createAndSendInvitation(
+          new Types.ObjectId(dto.tripId),
+          normalizedEmail,
+          requestingUserId,
+          guest,
+        );
+
+        this.logger.log(
+          `Invitación enviada automáticamente a ${normalizedEmail} al añadir guest ${dto.guestName}`,
+        );
+      }
+    }
 
     this.logger.log(
       `Guest añadido: ${dto.guestName} al viaje ${trip.name} (${dto.tripId})`,
@@ -499,7 +516,6 @@ export class ParticipantsService {
     email: string,
     requestingUserId: string,
   ): Promise<Invitation> {
-    // Obtener el guest participant
     const guest = await this.participantModel.findById(participantId);
 
     if (!guest) {
@@ -512,91 +528,24 @@ export class ParticipantsService {
       );
     }
 
-    // Validar acceso al trip (debe ser owner)
-    const requester = await this.participantModel.findOne({
-      tripId: guest.tripId,
-      userId: new Types.ObjectId(requestingUserId),
-      role: ParticipantRole.OWNER,
-    });
-
-    if (!requester) {
-      throw new ForbiddenException(
-        'Solo el propietario puede enviar invitaciones',
-      );
-    }
+    await this.ensureOwnerAccess(guest.tripId.toString(), requestingUserId);
 
     const normalizedEmail = email.toLowerCase().trim();
-
-    // Verificar si el email ya tiene una invitación pendiente
-    const existingInvitation = await this.invitationModel.findOne({
-      tripId: guest.tripId,
-      email: normalizedEmail,
-      status: InvitationStatus.PENDING,
-    });
-
-    if (existingInvitation) {
-      throw new BadRequestException(
-        'Ya existe una invitación pendiente para este email',
-      );
-    }
-
-    // Verificar si ya existe un usuario con ese email
-    const existingUser = await this.userModel.findOne({
-      email: normalizedEmail,
-    });
-
-    if (existingUser) {
-      const existingParticipant = await this.participantModel.findOne({
-        tripId: guest.tripId,
-        userId: existingUser._id,
-      });
-
-      if (existingParticipant) {
-        throw new BadRequestException(
-          'Este usuario ya es participante del viaje',
-        );
-      }
-    }
-
-    // Crear la invitación
-    const token = randomBytes(32).toString('hex');
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    const invitation = await this.invitationModel.create({
-      tripId: guest.tripId,
-      email: normalizedEmail,
-      invitedBy: new Types.ObjectId(requestingUserId),
-      token,
-      status: InvitationStatus.PENDING,
-      expiresAt,
-    });
-
-    // Actualizar el guest con el invitationId
-    guest.invitationId = invitation._id;
-    if (!guest.guestEmail) {
-      guest.guestEmail = normalizedEmail;
-    }
-    await guest.save();
-
-    // Enviar el email
-    const inviter = await this.userModel.findById(requestingUserId);
-    const trip = await this.tripModel.findById(guest.tripId);
-
-    if (!trip) {
-      throw new NotFoundException('Viaje no encontrado');
-    }
-
-    await this.notificationsService.sendTripInvitationEmail(
+    await this.checkPendingInvitation(guest.tripId.toString(), normalizedEmail);
+    await this.checkExistingUserAndParticipant(
+      guest.tripId.toString(),
       normalizedEmail,
-      `${inviter?.firstName || ''} ${inviter?.lastName || ''}`.trim() ||
-        'Un usuario',
-      trip.name,
-      token,
+    );
+
+    const invitation = await this.createAndSendInvitation(
+      guest.tripId,
+      normalizedEmail,
+      requestingUserId,
+      guest,
     );
 
     this.logger.log(
-      `Invitación enviada a guest ${guest.guestName} (${normalizedEmail}) para el viaje ${trip.name}`,
+      `Invitación enviada a guest ${guest.guestName} (${normalizedEmail})`,
     );
 
     return invitation;
@@ -620,14 +569,7 @@ export class ParticipantsService {
     tripId: string,
     userId: string,
   ): Promise<Participant> {
-    const userParticipant = await this.participantModel.findOne({
-      tripId: new Types.ObjectId(tripId),
-      userId: new Types.ObjectId(userId),
-    });
-
-    if (!userParticipant) {
-      throw new ForbiddenException('No tienes acceso a este viaje');
-    }
+    await this.ensureParticipantAccess(tripId, userId);
 
     const participant = await this.participantModel
       .findOne({
