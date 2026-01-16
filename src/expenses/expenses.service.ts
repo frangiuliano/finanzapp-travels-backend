@@ -315,6 +315,10 @@ export class ExpensesService {
       paidByParticipantId: createExpenseDto.paidByParticipantId
         ? new Types.ObjectId(createExpenseDto.paidByParticipantId)
         : undefined,
+      paymentMethod: createExpenseDto.paymentMethod || 'cash',
+      cardId: createExpenseDto.cardId
+        ? new Types.ObjectId(createExpenseDto.cardId)
+        : undefined,
       isDivisible,
       splitType: isDivisible ? createExpenseDto.splitType : undefined,
       splits: processedSplits,
@@ -348,6 +352,14 @@ export class ExpensesService {
       })
       .populate('createdBy', 'firstName lastName email')
       .populate('budgetId', '_id name')
+      .populate({
+        path: 'cardId',
+        select: '_id name lastFourDigits type',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName',
+        },
+      })
       .lean();
 
     return this.transformExpense(populatedExpense);
@@ -396,6 +408,14 @@ export class ExpensesService {
       })
       .populate('createdBy', 'firstName lastName email')
       .populate('budgetId', '_id name')
+      .populate({
+        path: 'cardId',
+        select: '_id name lastFourDigits type',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName',
+        },
+      })
       .sort({ expenseDate: -1, createdAt: -1 })
       .lean();
 
@@ -423,6 +443,14 @@ export class ExpensesService {
       })
       .populate('createdBy', 'firstName lastName email')
       .populate('budgetId', '_id name')
+      .populate({
+        path: 'cardId',
+        select: '_id name lastFourDigits type',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName',
+        },
+      })
       .lean();
 
     if (!expense) {
@@ -608,8 +636,11 @@ export class ExpensesService {
       processedSplits = undefined;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { tripId: _, ...updateFields } = updateExpenseDto;
+
     Object.assign(expense, {
-      ...updateExpenseDto,
+      ...updateFields,
       budgetId:
         updateExpenseDto.budgetId !== undefined
           ? updateExpenseDto.budgetId
@@ -619,6 +650,16 @@ export class ExpensesService {
       paidByParticipantId: updateExpenseDto.paidByParticipantId
         ? new Types.ObjectId(updateExpenseDto.paidByParticipantId)
         : expense.paidByParticipantId,
+      paymentMethod:
+        updateExpenseDto.paymentMethod !== undefined
+          ? updateExpenseDto.paymentMethod
+          : expense.paymentMethod,
+      cardId:
+        updateExpenseDto.cardId !== undefined
+          ? updateExpenseDto.cardId
+            ? new Types.ObjectId(updateExpenseDto.cardId)
+            : undefined
+          : expense.cardId,
       isDivisible,
       splitType: isDivisible
         ? updateExpenseDto.splitType || expense.splitType
@@ -670,6 +711,14 @@ export class ExpensesService {
       })
       .populate('createdBy', 'firstName lastName email')
       .populate('budgetId', '_id name')
+      .populate({
+        path: 'cardId',
+        select: '_id name lastFourDigits type',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName',
+        },
+      })
       .lean();
 
     return this.transformExpense(populatedExpense);
@@ -1045,6 +1094,14 @@ export class ExpensesService {
       })
       .populate('createdBy', 'firstName lastName email')
       .populate('budgetId', '_id name')
+      .populate({
+        path: 'cardId',
+        select: '_id name lastFourDigits type',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName',
+        },
+      })
       .lean();
 
     return this.transformExpense(populatedExpense);
