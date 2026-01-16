@@ -48,20 +48,8 @@ export class Expense {
   @Prop({ required: false, maxlength: 50 })
   category?: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'Participant', required: false })
-  paidByParticipantId?: Types.ObjectId;
-
-  @Prop({
-    type: {
-      name: { type: String, required: true },
-      email: { type: String, required: false },
-    },
-    required: false,
-  })
-  paidByThirdParty?: {
-    name: string;
-    email?: string;
-  };
+  @Prop({ type: Types.ObjectId, ref: 'Participant', required: true })
+  paidByParticipantId: Types.ObjectId;
 
   @Prop({
     type: String,

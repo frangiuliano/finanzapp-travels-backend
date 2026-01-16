@@ -15,7 +15,6 @@ import {
 import { Type } from 'class-transformer';
 import { ExpenseStatus, SplitType, PaymentMethod } from '../expense.schema';
 import { ExpenseSplitDto } from './expense-split.dto';
-import { ThirdPartyPayerDto } from './third-party-payer.dto';
 import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
 
 export class UpdateExpenseDto {
@@ -69,11 +68,6 @@ export class UpdateExpenseDto {
   @IsOptional()
   @IsMongoId({ message: 'El ID del participante no es válido' })
   paidByParticipantId?: string;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => ThirdPartyPayerDto)
-  paidByThirdParty?: ThirdPartyPayerDto;
 
   @IsOptional()
   @IsEnum(ExpenseStatus, {
