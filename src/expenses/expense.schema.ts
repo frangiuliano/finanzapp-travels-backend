@@ -11,6 +11,11 @@ export enum SplitType {
   MANUAL = 'manual',
 }
 
+export enum PaymentMethod {
+  CASH = 'cash',
+  CARD = 'card',
+}
+
 export interface ExpenseSplit {
   participantId: Types.ObjectId;
   amount: number;
@@ -65,6 +70,17 @@ export class Expense {
     required: true,
   })
   status: ExpenseStatus;
+
+  @Prop({
+    type: String,
+    enum: PaymentMethod,
+    default: PaymentMethod.CASH,
+    required: true,
+  })
+  paymentMethod: PaymentMethod;
+
+  @Prop({ type: Types.ObjectId, ref: 'Card', required: false })
+  cardId?: Types.ObjectId;
 
   @Prop({ type: Boolean, default: false, required: true })
   isDivisible: boolean;
@@ -133,3 +149,4 @@ ExpenseSchema.index(
 ExpenseSchema.index({ paidByParticipantId: 1 });
 ExpenseSchema.index({ status: 1 });
 ExpenseSchema.index({ expenseDate: -1 });
+ExpenseSchema.index({ cardId: 1 });

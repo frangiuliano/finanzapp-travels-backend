@@ -14,7 +14,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ExpenseStatus, SplitType } from '../expense.schema';
+import { ExpenseStatus, SplitType, PaymentMethod } from '../expense.schema';
 import { ExpenseSplitDto } from './expense-split.dto';
 import { ThirdPartyPayerDto } from './third-party-payer.dto';
 import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
@@ -81,6 +81,16 @@ export class CreateExpenseDto {
     message: 'El estado debe ser "paid" o "pending"',
   })
   status?: ExpenseStatus;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod, {
+    message: 'El método de pago debe ser "cash" o "card"',
+  })
+  paymentMethod?: PaymentMethod;
+
+  @IsOptional()
+  @IsMongoId({ message: 'El ID de la tarjeta no es válido' })
+  cardId?: string;
 
   @IsOptional()
   @IsBoolean()
