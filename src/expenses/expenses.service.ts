@@ -43,6 +43,14 @@ interface PopulatedBudget {
   name: string;
 }
 
+interface PopulatedCard {
+  _id: Types.ObjectId;
+  name: string;
+  lastFourDigits: string;
+  type: string;
+  userId?: PopulatedUser | Types.ObjectId;
+}
+
 interface PopulatedExpenseSplit {
   participantId: PopulatedParticipant | Types.ObjectId;
   amount: number;
@@ -65,6 +73,8 @@ interface PopulatedExpense {
     email?: string;
   };
   status: ExpenseStatus;
+  paymentMethod?: string;
+  cardId?: PopulatedCard | Types.ObjectId;
   isDivisible: boolean;
   splitType?: SplitType;
   splits?: PopulatedExpenseSplit[];
@@ -105,6 +115,18 @@ function isPopulatedBudget(
     value !== null &&
     !(value instanceof Types.ObjectId) &&
     'name' in value
+  );
+}
+
+function isPopulatedCard(
+  value: PopulatedCard | Types.ObjectId,
+): value is PopulatedCard {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Types.ObjectId) &&
+    'name' in value &&
+    'lastFourDigits' in value
   );
 }
 
@@ -1191,6 +1213,43 @@ export class ExpensesService {
         transformed.paidByParticipantId = objectIdToString(
           expenseRecord.paidByParticipantId,
         );
+      }
+    }
+
+    if (expenseRecord.cardId) {
+      if (isPopulatedCard(expenseRecord.cardId)) {
+        const card = expenseRecord.cardId;
+        const cardData: {
+          _id: string;
+          name: string;
+          lastFourDigits: string;
+          type: string;
+          user?: {
+            _id: string;
+            firstName: string;
+            lastName: string;
+          };
+        } = {
+          _id: objectIdToString(card._id),
+          name: card.name,
+          lastFourDigits: card.lastFourDigits,
+          type: card.type,
+        };
+
+        if (card.userId) {
+          if (isPopulatedUser(card.userId)) {
+            cardData.user = {
+              _id: objectIdToString(card.userId._id),
+              firstName: card.userId.firstName,
+              lastName: card.userId.lastName,
+            };
+          }
+        }
+
+        transformed.card = cardData;
+        transformed.cardId = objectIdToString(card._id);
+      } else {
+        transformed.cardId = objectIdToString(expenseRecord.cardId);
       }
     }
 
