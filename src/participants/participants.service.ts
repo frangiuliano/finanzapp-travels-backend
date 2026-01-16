@@ -69,10 +69,7 @@ export class ParticipantsService {
     return ownerParticipant;
   }
 
-  private async ensureParticipantAccess(
-    tripId: string,
-    userId: string,
-  ): Promise<void> {
+  async ensureParticipantAccess(tripId: string, userId: string): Promise<void> {
     const participant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(tripId),
       userId: new Types.ObjectId(userId),
