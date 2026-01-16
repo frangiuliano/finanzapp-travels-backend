@@ -127,6 +127,18 @@ export class ExpensesController {
     };
   }
 
+  @Get('trip/:tripId/debts')
+  async getParticipantDebts(
+    @Param('tripId') tripId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    const debts = await this.expensesService.getParticipantDebts(
+      tripId,
+      userId,
+    );
+    return debts;
+  }
+
   @Post(':id/settle')
   @HttpCode(HttpStatus.OK)
   async settleExpense(@Param('id') id: string, @GetUser('_id') userId: string) {

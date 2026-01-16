@@ -67,11 +67,7 @@ interface PopulatedExpense {
   merchantName?: string;
   tags?: string[];
   category?: string;
-  paidByParticipantId?: PopulatedParticipant | Types.ObjectId;
-  paidByThirdParty?: {
-    name: string;
-    email?: string;
-  };
+  paidByParticipantId: PopulatedParticipant | Types.ObjectId;
   status: ExpenseStatus;
   paymentMethod?: string;
   cardId?: PopulatedCard | Types.ObjectId;
@@ -184,60 +180,18 @@ export class ExpensesService {
       }
     }
 
-    if (
-      !createExpenseDto.paidByParticipantId &&
-      !createExpenseDto.paidByThirdParty
-    ) {
-      throw new BadRequestException(
-        'Debe especificar quién pagó el gasto (participante o tercero)',
+    const paidByParticipant = await this.participantModel.findOne({
+      _id: new Types.ObjectId(createExpenseDto.paidByParticipantId),
+      tripId: new Types.ObjectId(createExpenseDto.tripId),
+    });
+
+    if (!paidByParticipant) {
+      throw new NotFoundException(
+        'El participante que pagó no existe o no pertenece a este viaje',
       );
     }
 
-    if (
-      createExpenseDto.paidByParticipantId &&
-      createExpenseDto.paidByThirdParty
-    ) {
-      throw new BadRequestException(
-        'No puede especificar participante y tercero al mismo tiempo',
-      );
-    }
-
-    const status =
-      createExpenseDto.status ||
-      (createExpenseDto.paidByThirdParty
-        ? ExpenseStatus.PENDING
-        : ExpenseStatus.PAID);
-
-    if (
-      status === ExpenseStatus.PENDING &&
-      !createExpenseDto.paidByThirdParty
-    ) {
-      throw new BadRequestException(
-        'Un gasto pendiente debe ser pagado por un tercero',
-      );
-    }
-
-    if (
-      status === ExpenseStatus.PAID &&
-      !createExpenseDto.paidByParticipantId
-    ) {
-      throw new BadRequestException(
-        'Un gasto pagado debe ser pagado por un participante',
-      );
-    }
-
-    if (createExpenseDto.paidByParticipantId) {
-      const paidByParticipant = await this.participantModel.findOne({
-        _id: new Types.ObjectId(createExpenseDto.paidByParticipantId),
-        tripId: new Types.ObjectId(createExpenseDto.tripId),
-      });
-
-      if (!paidByParticipant) {
-        throw new NotFoundException(
-          'El participante que pagó no existe o no pertenece a este viaje',
-        );
-      }
-    }
+    const status = createExpenseDto.status || ExpenseStatus.PAID;
 
     const isDivisible = createExpenseDto.isDivisible ?? false;
 
@@ -334,9 +288,9 @@ export class ExpensesService {
         ? new Types.ObjectId(createExpenseDto.budgetId)
         : undefined,
       currency: createExpenseDto.currency || DEFAULT_CURRENCY,
-      paidByParticipantId: createExpenseDto.paidByParticipantId
-        ? new Types.ObjectId(createExpenseDto.paidByParticipantId)
-        : undefined,
+      paidByParticipantId: new Types.ObjectId(
+        createExpenseDto.paidByParticipantId,
+      ),
       paymentMethod: createExpenseDto.paymentMethod || 'cash',
       cardId: createExpenseDto.cardId
         ? new Types.ObjectId(createExpenseDto.cardId)
@@ -529,16 +483,15 @@ export class ExpensesService {
       }
     }
 
-    if (
-      updateExpenseDto.paidByParticipantId ||
-      updateExpenseDto.paidByThirdParty
-    ) {
-      if (
-        updateExpenseDto.paidByParticipantId &&
-        updateExpenseDto.paidByThirdParty
-      ) {
-        throw new BadRequestException(
-          'No puede especificar participante y tercero al mismo tiempo',
+    if (updateExpenseDto.paidByParticipantId) {
+      const paidByParticipant = await this.participantModel.findOne({
+        _id: new Types.ObjectId(updateExpenseDto.paidByParticipantId),
+        tripId: expense.tripId,
+      });
+
+      if (!paidByParticipant) {
+        throw new NotFoundException(
+          'El participante que pagó no existe o no pertenece a este viaje',
         );
       }
     }
@@ -1062,6 +1015,133 @@ export class ExpensesService {
     };
   }
 
+  async getParticipantDebts(
+    tripId: string,
+    userId: string,
+  ): Promise<{
+    debts: Array<{
+      fromParticipantId: string;
+      fromParticipantName: string;
+      toParticipantId: string;
+      toParticipantName: string;
+      amount: number;
+    }>;
+  }> {
+    const userParticipant = await this.participantModel.findOne({
+      tripId: new Types.ObjectId(tripId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (!userParticipant) {
+      throw new ForbiddenException(
+        'No tienes acceso a este viaje o el viaje no existe',
+      );
+    }
+
+    const expenses = await this.expenseModel
+      .find({
+        tripId: new Types.ObjectId(tripId),
+        status: ExpenseStatus.PENDING,
+      })
+      .populate('paidByParticipantId', '_id guestName')
+      .populate('splits.participantId', '_id guestName')
+      .lean();
+
+    const participants = await this.participantModel
+      .find({
+        tripId: new Types.ObjectId(tripId),
+      })
+      .populate('userId', 'firstName lastName email')
+      .lean();
+
+    const participantMap = new Map<string, string>();
+    participants.forEach((p) => {
+      const participantId = p._id.toString();
+      const userIdObj = p.userId as
+        | Types.ObjectId
+        | {
+            _id: Types.ObjectId;
+            firstName: string;
+            lastName: string;
+            email: string;
+          };
+      let name = p.guestName || 'Sin nombre';
+      if (
+        !p.guestName &&
+        userIdObj &&
+        typeof userIdObj === 'object' &&
+        'firstName' in userIdObj &&
+        'lastName' in userIdObj
+      ) {
+        const user = userIdObj as {
+          firstName: string;
+          lastName: string;
+        };
+        name =
+          `${user.firstName || ''} ${user.lastName || ''}`.trim() ||
+          'Sin nombre';
+      }
+      participantMap.set(participantId, name);
+    });
+
+    const debtMap = new Map<string, Map<string, number>>();
+
+    expenses.forEach((exp) => {
+      if (!exp.paidByParticipantId) return;
+
+      const paidByObj = exp.paidByParticipantId as
+        | Types.ObjectId
+        | { _id: Types.ObjectId; userId?: unknown; guestName?: string };
+      const payerId =
+        paidByObj && typeof paidByObj === 'object' && '_id' in paidByObj
+          ? paidByObj._id.toString()
+          : (paidByObj as Types.ObjectId).toString();
+
+      if (exp.splits && exp.splits.length > 0) {
+        exp.splits.forEach((split) => {
+          const splitParticipantId = isPopulatedParticipant(split.participantId)
+            ? objectIdToString(split.participantId._id)
+            : objectIdToString(split.participantId);
+
+          if (splitParticipantId !== payerId) {
+            if (!debtMap.has(splitParticipantId)) {
+              debtMap.set(splitParticipantId, new Map<string, number>());
+            }
+            const debtorDebts = debtMap.get(splitParticipantId)!;
+            const currentDebt = debtorDebts.get(payerId) || 0;
+            debtorDebts.set(payerId, currentDebt + split.amount);
+          }
+        });
+      }
+    });
+
+    const debts: Array<{
+      fromParticipantId: string;
+      fromParticipantName: string;
+      toParticipantId: string;
+      toParticipantName: string;
+      amount: number;
+    }> = [];
+
+    debtMap.forEach((debtorDebts, fromParticipantId) => {
+      const fromParticipantName =
+        participantMap.get(fromParticipantId) || 'Sin nombre';
+      debtorDebts.forEach((amount, toParticipantId) => {
+        const toParticipantName =
+          participantMap.get(toParticipantId) || 'Sin nombre';
+        debts.push({
+          fromParticipantId,
+          fromParticipantName,
+          toParticipantId,
+          toParticipantName,
+          amount,
+        });
+      });
+    });
+
+    return { debts };
+  }
+
   async settleExpense(id: string, userId: string): Promise<Expense> {
     const expense = await this.expenseModel.findById(id);
 
@@ -1071,12 +1151,6 @@ export class ExpensesService {
 
     if (expense.status === ExpenseStatus.PAID) {
       throw new BadRequestException('Este gasto ya está marcado como pagado');
-    }
-
-    if (!expense.paidByThirdParty) {
-      throw new BadRequestException(
-        'Solo los gastos pagados por terceros pueden ser saldados',
-      );
     }
 
     const userParticipant = await this.participantModel.findOne({
