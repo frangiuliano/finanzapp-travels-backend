@@ -11,6 +11,7 @@ import { ParticipantsModule } from './participants/participants.module';
 import { BudgetsModule } from './budgets/budgets.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { BotModule } from './bot/bot.module';
+import { CardsModule } from './cards/cards.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { BotModule } from './bot/bot.module';
     BudgetsModule,
     ExpensesModule,
     BotModule,
+    CardsModule,
   ],
   controllers: [AppController],
   providers: [
