@@ -467,10 +467,7 @@ export class BotService {
       updatedBotUpdate.pendingExpense.budgetId = matchedBudget._id.toString();
       updatedBotUpdate.markModified('pendingExpense');
 
-      if (
-        !updatedBotUpdate.pendingExpense.paidByParticipantId &&
-        !updatedBotUpdate.pendingExpense.paidByThirdParty
-      ) {
+      if (!updatedBotUpdate.pendingExpense.paidByParticipantId) {
         updatedBotUpdate.state = ConversationState.ASKING_PAYER;
         await updatedBotUpdate.save();
         await this.askForPayer(updatedBotUpdate, telegramUserId);
@@ -498,10 +495,7 @@ export class BotService {
       botUpdate.userId!.toString(),
     );
 
-    const buttons = [
-      { text: '👤 Yo pagué', callback_data: 'payer:me' },
-      { text: '👥 Tercero (otra persona)', callback_data: 'payer:third' },
-    ];
+    const buttons = [{ text: '👤 Yo pagué', callback_data: 'payer:me' }];
 
     const typedParticipants = participants as unknown as PopulatedParticipant[];
     typedParticipants.forEach((p) => {
@@ -612,10 +606,7 @@ export class BotService {
           `PendingExpense después de actualizar: ${JSON.stringify(updatedBotUpdate.pendingExpense)}`,
         );
 
-        if (
-          !updatedBotUpdate.pendingExpense.paidByParticipantId &&
-          !updatedBotUpdate.pendingExpense.paidByThirdParty
-        ) {
+        if (!updatedBotUpdate.pendingExpense.paidByParticipantId) {
           updatedBotUpdate.state = ConversationState.ASKING_PAYER;
           await updatedBotUpdate.save();
           await this.askForPayer(updatedBotUpdate, telegramUserId);
@@ -691,25 +682,15 @@ export class BotService {
       if (userParticipant) {
         updatedBotUpdate.pendingExpense.paidByParticipantId =
           userParticipant._id.toString();
-        updatedBotUpdate.pendingExpense.paidByThirdParty = undefined;
       }
       updatedBotUpdate.markModified('pendingExpense');
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
       await this.answerCallbackQuery(callbackQueryId);
-    } else if (data === 'payer:third') {
-      await this.sendMessage(
-        telegramUserId,
-        '👤 Escribe el nombre de la persona que pagó:',
-      );
-      updatedBotUpdate.state = ConversationState.ASKING_PAYER;
-      await updatedBotUpdate.save();
-      await this.answerCallbackQuery(callbackQueryId);
     } else if (data.startsWith('payer:participant:')) {
       const participantId = data.replace('payer:participant:', '');
       updatedBotUpdate.pendingExpense.paidByParticipantId = participantId;
-      updatedBotUpdate.pendingExpense.paidByThirdParty = undefined;
       updatedBotUpdate.markModified('pendingExpense');
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
@@ -739,8 +720,6 @@ export class BotService {
         'firstName' in participant.userId
           ? `${participant.userId.firstName} ${participant.userId.lastName}`.trim()
           : 'Participante');
-    } else if (expense.paidByThirdParty) {
-      payerName = expense.paidByThirdParty.name;
     }
 
     let budgetName = 'Sin presupuesto';
@@ -808,11 +787,8 @@ export class BotService {
         description: expense.description || 'Gasto sin descripción',
         merchantName: expense.merchantName,
         budgetId: expense.budgetId,
-        paidByParticipantId: expense.paidByParticipantId,
-        paidByThirdParty: expense.paidByThirdParty,
-        status: expense.paidByThirdParty
-          ? ExpenseStatus.PENDING
-          : ExpenseStatus.PAID,
+        paidByParticipantId: expense.paidByParticipantId!,
+        status: ExpenseStatus.PAID,
         isDivisible: expense.isDivisible || false,
         splitType: expense.splitType as SplitType | undefined,
         splits: expense.splits as ExpenseSplitDto[] | undefined,

@@ -36,10 +36,6 @@ export class BotUpdate {
     merchantName?: string;
     budgetId?: string;
     paidByParticipantId?: string;
-    paidByThirdParty?: {
-      name: string;
-      email?: string;
-    };
     isDivisible?: boolean;
     splitType?: string;
     splits?: Array<{ participantId: string; amount?: number }>;
