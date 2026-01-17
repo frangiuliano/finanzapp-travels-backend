@@ -10,10 +10,12 @@ import {
 import { User, UserSchema } from '../users/user.schema';
 import { MessageParserService } from './parsers/message-parser.service';
 import { LLMParserService } from './parsers/llm-parser.service';
+import { ConversationalService } from './parsers/conversational.service';
 import { ExpensesModule } from '../expenses/expenses.module';
 import { TripsModule } from '../trips/trips.module';
 import { ParticipantsModule } from '../participants/participants.module';
 import { BudgetsModule } from '../budgets/budgets.module';
+import { CardsModule } from '../cards/cards.module';
 
 @Module({
   imports: [
@@ -26,9 +28,15 @@ import { BudgetsModule } from '../budgets/budgets.module';
     forwardRef(() => TripsModule),
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BudgetsModule),
+    forwardRef(() => CardsModule),
   ],
   controllers: [BotController],
-  providers: [BotService, MessageParserService, LLMParserService],
+  providers: [
+    BotService,
+    MessageParserService,
+    LLMParserService,
+    ConversationalService,
+  ],
   exports: [BotService],
 })
 export class BotModule {}

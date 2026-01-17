@@ -13,13 +13,19 @@ import {
   TelegramLinkTokenDocument,
 } from './telegram-link-token.schema';
 import { MessageParserService } from './parsers/message-parser.service';
+import { ConversationalService } from './parsers/conversational.service';
 import { ExpensesService } from '../expenses/expenses.service';
 import { TripsService } from '../trips/trips.service';
 import { ParticipantsService } from '../participants/participants.service';
 import { BudgetsService } from '../budgets/budgets.service';
+import { CardsService } from '../cards/cards.service';
 import * as crypto from 'crypto';
 import { CreateExpenseDto } from '../expenses/dto/create-expense.dto';
-import { ExpenseStatus, SplitType } from '../expenses/expense.schema';
+import {
+  ExpenseStatus,
+  SplitType,
+  PaymentMethod,
+} from '../expenses/expense.schema';
 import { ExpenseSplitDto } from '../expenses/dto/expense-split.dto';
 
 interface TelegramUpdate {
@@ -77,10 +83,12 @@ export class BotService implements OnModuleInit {
     private linkTokenModel: Model<TelegramLinkTokenDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private messageParser: MessageParserService,
+    private conversationalService: ConversationalService,
     private expensesService: ExpensesService,
     private tripsService: TripsService,
     private participantsService: ParticipantsService,
     private budgetsService: BudgetsService,
+    private cardsService: CardsService,
   ) {
     this.configService = configService;
     this.botToken = configService.get<string>('TELEGRAM_BOT_TOKEN');
@@ -315,6 +323,26 @@ export class BotService implements OnModuleInit {
         );
         await this.handlePayerSelection(botUpdate, text, telegramUserId);
         break;
+      case ConversationState.ASKING_MERCHANT:
+        this.logger.log(
+          'Estado ASKING_MERCHANT, llamando handleMerchantSelection...',
+        );
+        await this.handleMerchantSelection(botUpdate, text, telegramUserId);
+        break;
+      case ConversationState.ASKING_PAYMENT_METHOD:
+        this.logger.log(
+          'Estado ASKING_PAYMENT_METHOD, llamando handlePaymentMethodSelection...',
+        );
+        await this.handlePaymentMethodSelection(
+          botUpdate,
+          text,
+          telegramUserId,
+        );
+        break;
+      case ConversationState.ASKING_CARD:
+        this.logger.log('Estado ASKING_CARD, llamando handleCardSelection...');
+        await this.handleCardSelection(botUpdate, text, telegramUserId);
+        break;
       case ConversationState.ASKING_SPLIT:
         this.logger.log(
           'Estado ASKING_SPLIT, llamando handleSplitSelection...',
@@ -445,16 +473,35 @@ export class BotService implements OnModuleInit {
       { _id: Types.ObjectId; name?: string } & Record<string, unknown>
     >,
   ): Promise<void> {
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
+    const context = {
+      userName,
+      trips: trips.map((t) => ({
+        id: t._id.toString(),
+        name: t.name || 'Viaje sin nombre',
+      })),
+      participants: [],
+      budgets: [],
+      pendingExpense: botUpdate.pendingExpense,
+      missingInfo: { tripId: true },
+    };
+
+    const conversationalResponse =
+      await this.conversationalService.generateResponse('', context);
+
+    const message =
+      conversationalResponse?.message || '✈️ ¿Para qué viaje es este gasto?';
+
     const buttons = trips.slice(0, 10).map((trip) => ({
       text: trip.name || 'Viaje sin nombre',
       callback_data: `trip:${trip._id.toString()}`,
     }));
 
-    await this.sendMessageWithButtons(
-      telegramUserId,
-      '✈️ ¿Para qué viaje es este gasto?',
-      buttons,
-    );
+    await this.sendMessageWithButtons(telegramUserId, message, buttons);
   }
 
   private async askForBucket(
@@ -462,6 +509,50 @@ export class BotService implements OnModuleInit {
     telegramUserId: number,
     budgets: PopulatedBudget[],
   ): Promise<void> {
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
+    const tripId = botUpdate.currentTripId!.toString();
+    const participants = await this.participantsService.findByTrip(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const typedParticipants = participants as unknown as PopulatedParticipant[];
+
+    const context = {
+      userName,
+      trips: [],
+      participants: typedParticipants.map((p) => ({
+        id: p._id.toString(),
+        name:
+          p.guestName ||
+          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
+            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
+            : 'Participante'),
+        isUser: !!(
+          p.userId &&
+          typeof p.userId === 'object' &&
+          'firstName' in p.userId &&
+          p.userId._id.toString() === botUpdate.userId!.toString()
+        ),
+      })),
+      budgets: budgets.map((b) => ({
+        id: b._id.toString(),
+        name: b.name,
+      })),
+      pendingExpense: botUpdate.pendingExpense,
+      missingInfo: { budgetId: true },
+    };
+
+    const conversationalResponse =
+      await this.conversationalService.generateResponse('', context);
+
+    const message =
+      conversationalResponse?.message ||
+      '📂 ¿A qué bucket corresponde este gasto?';
+
     const buttons = budgets.slice(0, 10).map((budget) => ({
       text: budget.name,
       callback_data: `bucket:${budget._id.toString()}`,
@@ -469,11 +560,7 @@ export class BotService implements OnModuleInit {
 
     buttons.push({ text: '❌ Sin presupuesto', callback_data: 'bucket:none' });
 
-    await this.sendMessageWithButtons(
-      telegramUserId,
-      '📂 ¿A qué bucket corresponde este gasto?',
-      buttons,
-    );
+    await this.sendMessageWithButtons(telegramUserId, message, buttons);
   }
 
   private async handleTripSelection(
@@ -489,9 +576,43 @@ export class BotService implements OnModuleInit {
       } & Record<string, unknown>
     >;
 
-    const matchedTrip = typedTrips.find((t) =>
-      t.name?.toLowerCase().includes(text.toLowerCase()),
-    );
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
+    const context = {
+      userName,
+      trips: typedTrips.map((t) => ({
+        id: t._id.toString(),
+        name: t.name || 'Viaje sin nombre',
+      })),
+      participants: [],
+      budgets: [],
+      pendingExpense: botUpdate.pendingExpense,
+      missingInfo: { tripId: true },
+    };
+
+    const parsedResponse =
+      await this.conversationalService.parseNaturalResponse(
+        text,
+        context,
+        'trip',
+      );
+
+    let matchedTrip: { _id: Types.ObjectId; name?: string } | undefined;
+
+    if (parsedResponse.understood && parsedResponse.extracted?.tripId) {
+      matchedTrip = typedTrips.find(
+        (t) => t._id.toString() === parsedResponse.extracted?.tripId,
+      );
+    }
+
+    if (!matchedTrip) {
+      matchedTrip = typedTrips.find((t) =>
+        t.name?.toLowerCase().includes(text.toLowerCase()),
+      );
+    }
 
     if (matchedTrip) {
       const tripId = matchedTrip._id.toString();
@@ -499,10 +620,12 @@ export class BotService implements OnModuleInit {
       await botUpdate.save();
       await this.continueWithTrip(botUpdate, telegramUserId, tripId);
     } else {
-      await this.sendMessage(
-        telegramUserId,
-        '⚠️ No encontré ese viaje. Por favor, selecciona uno de los botones o escribe el nombre exacto.',
-      );
+      const conversationalResponse =
+        await this.conversationalService.generateResponse(text, context);
+      const errorMessage =
+        conversationalResponse?.message ||
+        '⚠️ No encontré ese viaje. Por favor, selecciona uno de los botones o escribe el nombre exacto.';
+      await this.sendMessage(telegramUserId, errorMessage);
     }
   }
 
@@ -566,11 +689,76 @@ export class BotService implements OnModuleInit {
       botUpdate.userId!.toString(),
     );
     const budgets = budgetsResult as PopulatedBudget[];
-    const matchedBudget = budgets.find((b) =>
-      b.name.toLowerCase().includes(text.toLowerCase()),
-    );
 
-    if (matchedBudget) {
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
+    const participants = await this.participantsService.findByTrip(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const typedParticipants = participants as unknown as PopulatedParticipant[];
+
+    const context = {
+      userName,
+      trips: [],
+      participants: typedParticipants.map((p) => ({
+        id: p._id.toString(),
+        name:
+          p.guestName ||
+          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
+            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
+            : 'Participante'),
+        isUser: !!(
+          p.userId &&
+          typeof p.userId === 'object' &&
+          'firstName' in p.userId &&
+          p.userId._id.toString() === botUpdate.userId!.toString()
+        ),
+      })),
+      budgets: budgets.map((b) => ({
+        id: b._id.toString(),
+        name: b.name,
+      })),
+      pendingExpense: botUpdate.pendingExpense,
+      missingInfo: { budgetId: true },
+    };
+
+    const parsedResponse =
+      await this.conversationalService.parseNaturalResponse(
+        text,
+        context,
+        'budget',
+      );
+
+    let matchedBudget: PopulatedBudget | undefined;
+
+    if (parsedResponse.understood && parsedResponse.extracted?.budgetId) {
+      matchedBudget = budgets.find(
+        (b) => b._id.toString() === parsedResponse.extracted?.budgetId,
+      );
+    }
+
+    if (!matchedBudget) {
+      if (
+        text.toLowerCase().includes('sin') ||
+        text.toLowerCase().includes('ninguno')
+      ) {
+        matchedBudget = undefined;
+      } else {
+        matchedBudget = budgets.find((b) =>
+          b.name.toLowerCase().includes(text.toLowerCase()),
+        );
+      }
+    }
+
+    if (
+      matchedBudget !== undefined ||
+      text.toLowerCase().includes('sin') ||
+      text.toLowerCase().includes('ninguno')
+    ) {
       const updatedBotUpdate = await this.botUpdateModel
         .findById(botUpdate._id)
         .exec();
@@ -578,7 +766,9 @@ export class BotService implements OnModuleInit {
         return;
       }
 
-      updatedBotUpdate.pendingExpense.budgetId = matchedBudget._id.toString();
+      updatedBotUpdate.pendingExpense.budgetId = matchedBudget
+        ? matchedBudget._id.toString()
+        : undefined;
       updatedBotUpdate.markModified('pendingExpense');
 
       if (!updatedBotUpdate.pendingExpense.paidByParticipantId) {
@@ -588,14 +778,23 @@ export class BotService implements OnModuleInit {
         return;
       }
 
+      if (!updatedBotUpdate.pendingExpense.merchantName) {
+        updatedBotUpdate.state = ConversationState.ASKING_MERCHANT;
+        await updatedBotUpdate.save();
+        await this.askForMerchant(updatedBotUpdate, telegramUserId);
+        return;
+      }
+
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
     } else {
-      await this.sendMessage(
-        telegramUserId,
-        '⚠️ No encontré ese bucket. Por favor, selecciona uno de los botones o escribe el nombre exacto.',
-      );
+      const conversationalResponse =
+        await this.conversationalService.generateResponse(text, context);
+      const errorMessage =
+        conversationalResponse?.message ||
+        '⚠️ No encontré ese bucket. Por favor, selecciona uno de los botones o escribe el nombre exacto.';
+      await this.sendMessage(telegramUserId, errorMessage);
     }
   }
 
@@ -610,6 +809,48 @@ export class BotService implements OnModuleInit {
     );
 
     const typedParticipants = participants as unknown as PopulatedParticipant[];
+
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
+    const budgetsResult: unknown = await this.budgetsService.findAll(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const budgets = budgetsResult as PopulatedBudget[];
+
+    const context = {
+      userName,
+      trips: [],
+      participants: typedParticipants.map((p) => ({
+        id: p._id.toString(),
+        name:
+          p.guestName ||
+          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
+            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
+            : 'Participante'),
+        isUser: !!(
+          p.userId &&
+          typeof p.userId === 'object' &&
+          'firstName' in p.userId &&
+          p.userId._id.toString() === botUpdate.userId!.toString()
+        ),
+      })),
+      budgets: budgets.map((b) => ({
+        id: b._id.toString(),
+        name: b.name,
+      })),
+      pendingExpense: botUpdate.pendingExpense,
+      missingInfo: { paidBy: true },
+    };
+
+    const conversationalResponse =
+      await this.conversationalService.generateResponse('', context);
+
+    const message =
+      conversationalResponse?.message || '💳 ¿Quién pagó este gasto?';
 
     const MAX_SHOWN = 3;
     const showAllButton = typedParticipants.length > MAX_SHOWN;
@@ -639,11 +880,7 @@ export class BotService implements OnModuleInit {
       });
     }
 
-    await this.sendMessageWithButtons(
-      telegramUserId,
-      '💳 ¿Quién pagó este gasto?',
-      buttons,
-    );
+    await this.sendMessageWithButtons(telegramUserId, message, buttons);
   }
 
   private async handlePayerSelection(
@@ -651,23 +888,427 @@ export class BotService implements OnModuleInit {
     text: string,
     telegramUserId: number,
   ): Promise<void> {
+    const tripId = botUpdate.currentTripId!.toString();
+    const participants = await this.participantsService.findByTrip(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const typedParticipants = participants as unknown as PopulatedParticipant[];
+
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
+    const budgetsResult: unknown = await this.budgetsService.findAll(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const budgets = budgetsResult as PopulatedBudget[];
+
+    const context = {
+      userName,
+      trips: [],
+      participants: typedParticipants.map((p) => ({
+        id: p._id.toString(),
+        name:
+          p.guestName ||
+          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
+            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
+            : 'Participante'),
+        isUser: !!(
+          p.userId &&
+          typeof p.userId === 'object' &&
+          'firstName' in p.userId &&
+          p.userId._id.toString() === botUpdate.userId!.toString()
+        ),
+      })),
+      budgets: budgets.map((b) => ({
+        id: b._id.toString(),
+        name: b.name,
+      })),
+      pendingExpense: botUpdate.pendingExpense,
+      missingInfo: { paidBy: true },
+    };
+
+    const parsedResponse =
+      await this.conversationalService.parseNaturalResponse(
+        text,
+        context,
+        'payer',
+      );
+
+    let matchedParticipantId: string | undefined;
+
     if (
-      text.toLowerCase().includes('yo') ||
-      text.toLowerCase().includes('mí')
+      parsedResponse.understood &&
+      parsedResponse.extracted?.paidByParticipantId
     ) {
-      const tripId = botUpdate.currentTripId!.toString();
+      matchedParticipantId = parsedResponse.extracted.paidByParticipantId;
+    } else if (
+      text.toLowerCase().includes('yo') ||
+      text.toLowerCase().includes('mí') ||
+      text.toLowerCase().includes('pagué') ||
+      text.toLowerCase().includes('pague')
+    ) {
       const userParticipant =
         (await this.participantsService.findUserParticipant(
           tripId,
           botUpdate.userId!.toString(),
         )) as unknown as PopulatedParticipant | null;
       if (userParticipant) {
-        botUpdate.pendingExpense = botUpdate.pendingExpense || {};
-        botUpdate.pendingExpense.paidByParticipantId =
-          userParticipant._id.toString();
+        matchedParticipantId = userParticipant._id.toString();
       }
-      botUpdate.state = ConversationState.CONFIRMING;
-      await this.showConfirmation(botUpdate, telegramUserId);
+    } else {
+      const matchedParticipant = typedParticipants.find((p) => {
+        const name =
+          p.guestName ||
+          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
+            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
+            : 'Participante');
+        return text.toLowerCase().includes(name.toLowerCase());
+      });
+      if (matchedParticipant) {
+        matchedParticipantId = matchedParticipant._id.toString();
+      }
+    }
+
+    if (matchedParticipantId) {
+      const updatedBotUpdate = await this.botUpdateModel
+        .findById(botUpdate._id)
+        .exec();
+      if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+        return;
+      }
+
+      updatedBotUpdate.pendingExpense.paidByParticipantId =
+        matchedParticipantId;
+      updatedBotUpdate.markModified('pendingExpense');
+
+      if (!updatedBotUpdate.pendingExpense.merchantName) {
+        updatedBotUpdate.state = ConversationState.ASKING_MERCHANT;
+        await updatedBotUpdate.save();
+        await this.askForMerchant(updatedBotUpdate, telegramUserId);
+        return;
+      }
+
+      updatedBotUpdate.state = ConversationState.CONFIRMING;
+      await updatedBotUpdate.save();
+      await this.showConfirmation(updatedBotUpdate, telegramUserId);
+    } else {
+      const conversationalResponse =
+        await this.conversationalService.generateResponse(text, context);
+      const errorMessage =
+        conversationalResponse?.message ||
+        '⚠️ No entendí quién pagó. Por favor, selecciona uno de los botones o escribe el nombre.';
+      await this.sendMessage(telegramUserId, errorMessage);
+    }
+  }
+
+  private async askForMerchant(
+    botUpdate: BotUpdateDocument,
+    telegramUserId: number,
+  ): Promise<void> {
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
+    const tripId = botUpdate.currentTripId!.toString();
+    const participants = await this.participantsService.findByTrip(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const typedParticipants = participants as unknown as PopulatedParticipant[];
+
+    const budgetsResult: unknown = await this.budgetsService.findAll(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const budgets = budgetsResult as PopulatedBudget[];
+
+    const context = {
+      userName,
+      trips: [],
+      participants: typedParticipants.map((p) => ({
+        id: p._id.toString(),
+        name:
+          p.guestName ||
+          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
+            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
+            : 'Participante'),
+        isUser: !!(
+          p.userId &&
+          typeof p.userId === 'object' &&
+          'firstName' in p.userId &&
+          p.userId._id.toString() === botUpdate.userId!.toString()
+        ),
+      })),
+      budgets: budgets.map((b) => ({
+        id: b._id.toString(),
+        name: b.name,
+      })),
+      pendingExpense: botUpdate.pendingExpense,
+      missingInfo: { merchantName: true },
+    };
+
+    const conversationalResponse =
+      await this.conversationalService.generateResponse('', context);
+
+    const message =
+      conversationalResponse?.message ||
+      '🏪 ¿En qué comercio hiciste este gasto? (Puedes escribir "sin comercio" si no aplica)';
+
+    await this.sendMessage(telegramUserId, message);
+  }
+
+  private async handleMerchantSelection(
+    botUpdate: BotUpdateDocument,
+    text: string,
+    telegramUserId: number,
+  ): Promise<void> {
+    const updatedBotUpdate = await this.botUpdateModel
+      .findById(botUpdate._id)
+      .exec();
+    if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+      return;
+    }
+
+    let merchantName: string | undefined;
+
+    if (
+      text.toLowerCase().includes('sin') &&
+      (text.toLowerCase().includes('comercio') ||
+        text.toLowerCase().includes('tienda') ||
+        text.toLowerCase().includes('lugar'))
+    ) {
+      merchantName = undefined;
+    } else {
+      merchantName = text.trim();
+      if (merchantName.length > 100) {
+        merchantName = merchantName.substring(0, 100);
+      }
+      merchantName = merchantName
+        .split(' ')
+        .map(
+          (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
+        )
+        .join(' ');
+    }
+
+    updatedBotUpdate.pendingExpense.merchantName = merchantName;
+    updatedBotUpdate.markModified('pendingExpense');
+
+    if (!updatedBotUpdate.pendingExpense.paymentMethod) {
+      updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
+      await updatedBotUpdate.save();
+      await this.askForPaymentMethod(updatedBotUpdate, telegramUserId);
+      return;
+    }
+
+    updatedBotUpdate.state = ConversationState.CONFIRMING;
+    await updatedBotUpdate.save();
+    await this.showConfirmation(updatedBotUpdate, telegramUserId);
+  }
+
+  private async askForPaymentMethod(
+    botUpdate: BotUpdateDocument,
+    telegramUserId: number,
+  ): Promise<void> {
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
+    const context = {
+      userName,
+      trips: [],
+      participants: [],
+      budgets: [],
+      pendingExpense: botUpdate.pendingExpense,
+      missingInfo: { paymentMethod: true },
+    };
+
+    const conversationalResponse =
+      await this.conversationalService.generateResponse('', context);
+
+    const message =
+      conversationalResponse?.message ||
+      '💳 ¿Pagaste con efectivo o con tarjeta?';
+
+    const buttons = [
+      { text: '💵 Efectivo', callback_data: 'payment:cash' },
+      { text: '💳 Tarjeta', callback_data: 'payment:card' },
+    ];
+
+    await this.sendMessageWithButtons(telegramUserId, message, buttons);
+  }
+
+  private async handlePaymentMethodSelection(
+    botUpdate: BotUpdateDocument,
+    text: string,
+    telegramUserId: number,
+  ): Promise<void> {
+    const updatedBotUpdate = await this.botUpdateModel
+      .findById(botUpdate._id)
+      .exec();
+    if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+      return;
+    }
+
+    let paymentMethod: string | undefined;
+
+    if (
+      text.toLowerCase().includes('efectivo') ||
+      text.toLowerCase().includes('cash') ||
+      text.toLowerCase().includes('dinero')
+    ) {
+      paymentMethod = PaymentMethod.CASH;
+    } else if (
+      text.toLowerCase().includes('tarjeta') ||
+      text.toLowerCase().includes('card') ||
+      text.toLowerCase().includes('crédito') ||
+      text.toLowerCase().includes('débito')
+    ) {
+      paymentMethod = PaymentMethod.CARD;
+    }
+
+    if (paymentMethod) {
+      updatedBotUpdate.pendingExpense.paymentMethod = paymentMethod;
+      updatedBotUpdate.markModified('pendingExpense');
+
+      const paymentMethodStr = String(paymentMethod);
+      if (
+        paymentMethodStr === String(PaymentMethod.CARD) ||
+        paymentMethodStr === 'card'
+      ) {
+        updatedBotUpdate.state = ConversationState.ASKING_CARD;
+        await updatedBotUpdate.save();
+        await this.askForCard(updatedBotUpdate, telegramUserId);
+        return;
+      }
+
+      updatedBotUpdate.state = ConversationState.CONFIRMING;
+      await updatedBotUpdate.save();
+      await this.showConfirmation(updatedBotUpdate, telegramUserId);
+    } else {
+      await this.sendMessage(
+        telegramUserId,
+        '⚠️ No entendí. Por favor, responde "efectivo" o "tarjeta".',
+      );
+    }
+  }
+
+  private async askForCard(
+    botUpdate: BotUpdateDocument,
+    telegramUserId: number,
+  ): Promise<void> {
+    const tripId = botUpdate.currentTripId!.toString();
+    const cards = await this.cardsService.findByTrip(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+
+    if (cards.length === 0) {
+      const user = await this.userModel.findById(botUpdate.userId).exec();
+      const userName = user
+        ? `${user.firstName} ${user.lastName}`.trim()
+        : 'Usuario';
+
+      const context = {
+        userName,
+        trips: [],
+        participants: [],
+        budgets: [],
+        pendingExpense: botUpdate.pendingExpense,
+      };
+
+      const conversationalResponse =
+        await this.conversationalService.generateResponse(
+          'No hay tarjetas registradas para este viaje. El usuario debe registrar una tarjeta primero.',
+          context,
+        );
+
+      const message =
+        conversationalResponse?.message ||
+        '⚠️ No hay tarjetas registradas para este viaje. Por favor, registra una tarjeta primero desde la web.';
+
+      await this.sendMessage(telegramUserId, message);
+      return;
+    }
+
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
+    const context = {
+      userName,
+      trips: [],
+      participants: [],
+      budgets: [],
+      pendingExpense: botUpdate.pendingExpense,
+      cards: cards.map((c) => ({
+        id: this.getCardId(c),
+        name: c.name,
+        lastFourDigits: c.lastFourDigits,
+      })),
+    };
+
+    const conversationalResponse =
+      await this.conversationalService.generateResponse('', context);
+
+    const message =
+      conversationalResponse?.message ||
+      '💳 ¿Con qué tarjeta pagaste este gasto?';
+
+    const buttons = cards.slice(0, 10).map((card) => ({
+      text: `${card.name} (****${card.lastFourDigits})`,
+      callback_data: `card:${this.getCardId(card)}`,
+    }));
+
+    await this.sendMessageWithButtons(telegramUserId, message, buttons);
+  }
+
+  private async handleCardSelection(
+    botUpdate: BotUpdateDocument,
+    text: string,
+    telegramUserId: number,
+  ): Promise<void> {
+    const tripId = botUpdate.currentTripId!.toString();
+    const cards = await this.cardsService.findByTrip(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+
+    const updatedBotUpdate = await this.botUpdateModel
+      .findById(botUpdate._id)
+      .exec();
+    if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+      return;
+    }
+
+    const matchedCard = cards.find((c) => {
+      const cardName = c.name.toLowerCase();
+      const cardDigits = c.lastFourDigits;
+      return (
+        text.toLowerCase().includes(cardName) ||
+        text.includes(cardDigits) ||
+        text.toLowerCase().includes(`****${cardDigits}`)
+      );
+    });
+
+    if (matchedCard) {
+      updatedBotUpdate.pendingExpense.cardId = this.getCardId(matchedCard);
+      updatedBotUpdate.markModified('pendingExpense');
+      updatedBotUpdate.state = ConversationState.CONFIRMING;
+      await updatedBotUpdate.save();
+      await this.showConfirmation(updatedBotUpdate, telegramUserId);
+    } else {
+      await this.sendMessage(
+        telegramUserId,
+        '⚠️ No encontré esa tarjeta. Por favor, selecciona una de las opciones o escribe el nombre o los últimos 4 dígitos.',
+      );
     }
   }
 
@@ -784,6 +1425,51 @@ export class BotService implements OnModuleInit {
           telegramUserId,
           callbackQueryId,
         );
+      } else if (data.startsWith('payment:')) {
+        const paymentMethod = data.replace('payment:', '');
+        const updatedBotUpdate = await this.botUpdateModel
+          .findById(botUpdate._id)
+          .exec();
+        if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+          await this.answerCallbackQuery(
+            callbackQueryId,
+            '⚠️ Error: No se encontró el gasto.',
+          );
+          return;
+        }
+
+        updatedBotUpdate.pendingExpense.paymentMethod = paymentMethod;
+        updatedBotUpdate.markModified('pendingExpense');
+
+        if (paymentMethod === 'card') {
+          updatedBotUpdate.state = ConversationState.ASKING_CARD;
+          await updatedBotUpdate.save();
+          await this.askForCard(updatedBotUpdate, telegramUserId);
+        } else {
+          updatedBotUpdate.state = ConversationState.CONFIRMING;
+          await updatedBotUpdate.save();
+          await this.showConfirmation(updatedBotUpdate, telegramUserId);
+        }
+        await this.answerCallbackQuery(callbackQueryId);
+      } else if (data.startsWith('card:')) {
+        const cardId = data.replace('card:', '');
+        const updatedBotUpdate = await this.botUpdateModel
+          .findById(botUpdate._id)
+          .exec();
+        if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+          await this.answerCallbackQuery(
+            callbackQueryId,
+            '⚠️ Error: No se encontró el gasto.',
+          );
+          return;
+        }
+
+        updatedBotUpdate.pendingExpense.cardId = cardId;
+        updatedBotUpdate.markModified('pendingExpense');
+        updatedBotUpdate.state = ConversationState.CONFIRMING;
+        await updatedBotUpdate.save();
+        await this.showConfirmation(updatedBotUpdate, telegramUserId);
+        await this.answerCallbackQuery(callbackQueryId);
       } else if (data.startsWith('confirm:')) {
         if (data === 'confirm:yes') {
           await this.confirmExpense(botUpdate, telegramUserId);
@@ -830,6 +1516,23 @@ export class BotService implements OnModuleInit {
           userParticipant._id.toString();
       }
       updatedBotUpdate.markModified('pendingExpense');
+
+      if (!updatedBotUpdate.pendingExpense.merchantName) {
+        updatedBotUpdate.state = ConversationState.ASKING_MERCHANT;
+        await updatedBotUpdate.save();
+        await this.askForMerchant(updatedBotUpdate, telegramUserId);
+        await this.answerCallbackQuery(callbackQueryId);
+        return;
+      }
+
+      if (!updatedBotUpdate.pendingExpense.paymentMethod) {
+        updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
+        await updatedBotUpdate.save();
+        await this.askForPaymentMethod(updatedBotUpdate, telegramUserId);
+        await this.answerCallbackQuery(callbackQueryId);
+        return;
+      }
+
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
@@ -838,6 +1541,23 @@ export class BotService implements OnModuleInit {
       const participantId = data.replace('payer:participant:', '');
       updatedBotUpdate.pendingExpense.paidByParticipantId = participantId;
       updatedBotUpdate.markModified('pendingExpense');
+
+      if (!updatedBotUpdate.pendingExpense.merchantName) {
+        updatedBotUpdate.state = ConversationState.ASKING_MERCHANT;
+        await updatedBotUpdate.save();
+        await this.askForMerchant(updatedBotUpdate, telegramUserId);
+        await this.answerCallbackQuery(callbackQueryId);
+        return;
+      }
+
+      if (!updatedBotUpdate.pendingExpense.paymentMethod) {
+        updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
+        await updatedBotUpdate.save();
+        await this.askForPaymentMethod(updatedBotUpdate, telegramUserId);
+        await this.answerCallbackQuery(callbackQueryId);
+        return;
+      }
+
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
@@ -881,6 +1601,11 @@ export class BotService implements OnModuleInit {
     const expense = botUpdate.pendingExpense;
     if (!expense) return;
 
+    const user = await this.userModel.findById(botUpdate.userId).exec();
+    const userName = user
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : 'Usuario';
+
     let payerName = 'No especificado';
     if (expense.paidByParticipantId) {
       const participant = (await this.participantsService.findOne(
@@ -909,18 +1634,70 @@ export class BotService implements OnModuleInit {
       budgetName = budget?.name || 'Sin presupuesto';
     }
 
-    const merchantLine = expense.merchantName
-      ? `🏪 *Comercio:* ${expense.merchantName}\n`
-      : '';
+    const tripId = botUpdate.currentTripId!.toString();
+    const trip = await this.tripsService.findOne(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const tripName =
+      (trip as unknown as { name?: string })?.name || 'Viaje sin nombre';
+
+    const participants = await this.participantsService.findByTrip(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const typedParticipants = participants as unknown as PopulatedParticipant[];
+
+    const budgetsResult: unknown = await this.budgetsService.findAll(
+      tripId,
+      botUpdate.userId!.toString(),
+    );
+    const budgets = budgetsResult as PopulatedBudget[];
+
+    const context = {
+      userName,
+      trips: [{ id: tripId, name: tripName }],
+      participants: typedParticipants.map((p) => ({
+        id: p._id.toString(),
+        name:
+          p.guestName ||
+          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
+            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
+            : 'Participante'),
+        isUser: !!(
+          p.userId &&
+          typeof p.userId === 'object' &&
+          'firstName' in p.userId &&
+          p.userId._id.toString() === botUpdate.userId!.toString()
+        ),
+      })),
+      budgets: budgets.map((b) => ({
+        id: b._id.toString(),
+        name: b.name,
+      })),
+      pendingExpense: expense,
+    };
+
+    const expenseSummary = `Monto: ${expense.amount} ${expense.currency || 'USD'}, Descripción: ${expense.description || 'Sin descripción'}${expense.merchantName ? `, Comercio: ${expense.merchantName}` : ''}, Bucket: ${budgetName}, Pagó: ${payerName}, Tipo: ${expense.isDivisible ? 'Compartido' : 'Personal'}, Viaje: ${tripName}`;
+
+    const conversationalResponse =
+      await this.conversationalService.generateResponse(
+        `Confirma este gasto: ${expenseSummary}`,
+        context,
+      );
+
     const message =
-      '📋 *Resumen del gasto:*\n\n' +
-      `💰 *Monto:* ${expense.amount} ${expense.currency || 'USD'}\n` +
-      `📝 *Descripción:* ${expense.description || 'Sin descripción'}\n` +
-      merchantLine +
-      `📂 *Bucket:* ${budgetName}\n` +
-      `💳 *Pagó:* ${payerName}\n` +
-      `📊 *Tipo:* ${expense.isDivisible ? 'Compartido' : 'Personal'}\n` +
-      `✅ *Estado:* Pagado`;
+      conversationalResponse?.message ||
+      `📋 *Resumen del gasto:*\n\n` +
+        `💰 *Monto:* ${expense.amount} ${expense.currency || 'USD'}\n` +
+        `📝 *Descripción:* ${expense.description || 'Sin descripción'}\n` +
+        (expense.merchantName
+          ? `🏪 *Comercio:* ${expense.merchantName}\n`
+          : '') +
+        `📂 *Bucket:* ${budgetName}\n` +
+        `💳 *Pagó:* ${payerName}\n` +
+        `📊 *Tipo:* ${expense.isDivisible ? 'Compartido' : 'Personal'}\n` +
+        `✅ *Estado:* Pagado`;
 
     const buttons = [
       { text: '✅ Confirmar', callback_data: 'confirm:yes' },
@@ -964,6 +1741,9 @@ export class BotService implements OnModuleInit {
         budgetId: expense.budgetId,
         paidByParticipantId: expense.paidByParticipantId!,
         status: ExpenseStatus.PAID,
+        paymentMethod:
+          (expense.paymentMethod as PaymentMethod) || PaymentMethod.CASH,
+        cardId: expense.cardId,
         isDivisible: expense.isDivisible || false,
         splitType: expense.splitType as SplitType | undefined,
         splits: expense.splits as ExpenseSplitDto[] | undefined,
@@ -979,11 +1759,42 @@ export class BotService implements OnModuleInit {
       updatedBotUpdate.pendingExpense = undefined;
       await updatedBotUpdate.save();
 
-      await this.sendMessage(
-        telegramUserId,
-        '✅ ¡Gasto guardado exitosamente!\n\n' +
-          'Puedes verlo en tu dashboard web.',
+      const user = await this.userModel
+        .findById(updatedBotUpdate.userId)
+        .exec();
+      const userName = user
+        ? `${user.firstName} ${user.lastName}`.trim()
+        : 'Usuario';
+
+      const trip = await this.tripsService.findOne(
+        updatedBotUpdate.currentTripId.toString(),
+        updatedBotUpdate.userId!.toString(),
       );
+      const tripName =
+        (trip as unknown as { name?: string })?.name || 'Viaje sin nombre';
+
+      const expenseInfo = `${expense.amount} ${expense.currency || 'USD'} - ${expense.description || 'Sin descripción'}${expense.merchantName ? ` en ${expense.merchantName}` : ''} para ${tripName}`;
+
+      const context = {
+        userName,
+        trips: [
+          { id: updatedBotUpdate.currentTripId.toString(), name: tripName },
+        ],
+        participants: [],
+        budgets: [],
+      };
+
+      const conversationalResponse =
+        await this.conversationalService.generateResponse(
+          `El usuario confirmó el gasto: ${expenseInfo}. Responde confirmando que se guardó exitosamente.`,
+          context,
+        );
+
+      const confirmationMessage =
+        conversationalResponse?.message ||
+        '✅ ¡Gasto guardado exitosamente!\n\nPuedes verlo en tu dashboard web.';
+
+      await this.sendMessage(telegramUserId, confirmationMessage);
     } catch (error) {
       this.logger.error('Error creando gasto:', error);
       await this.sendMessage(
@@ -1042,6 +1853,19 @@ export class BotService implements OnModuleInit {
     botUpdate.currentTripId = new Types.ObjectId(tripId);
     await botUpdate.save();
     return tripId;
+  }
+
+  private getCardId(card: unknown): string {
+    const cardAny = card as { _id?: Types.ObjectId | string; id?: string };
+    if (cardAny._id) {
+      return typeof cardAny._id === 'string'
+        ? cardAny._id
+        : cardAny._id.toString();
+    }
+    if (cardAny.id) {
+      return cardAny.id;
+    }
+    return '';
   }
 
   private async sendMessage(chatId: number, text: string): Promise<void> {
