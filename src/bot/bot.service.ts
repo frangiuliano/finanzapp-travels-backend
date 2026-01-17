@@ -1,17 +1,12 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { ConfigService } from '@nestjs/config';
 import { User, UserDocument } from '../users/user.schema';
 import {
   BotUpdate,
   BotUpdateDocument,
   ConversationState,
 } from './bot-update.schema';
-import {
-  TelegramLinkToken,
-  TelegramLinkTokenDocument,
-} from './telegram-link-token.schema';
 import { MessageParserService } from './parsers/message-parser.service';
 import { ConversationalService } from './parsers/conversational.service';
 import { ExpensesService } from '../expenses/expenses.service';
@@ -19,7 +14,6 @@ import { TripsService } from '../trips/trips.service';
 import { ParticipantsService } from '../participants/participants.service';
 import { BudgetsService } from '../budgets/budgets.service';
 import { CardsService } from '../cards/cards.service';
-import * as crypto from 'crypto';
 import { CreateExpenseDto } from '../expenses/dto/create-expense.dto';
 import {
   ExpenseStatus,
@@ -27,60 +21,20 @@ import {
   PaymentMethod,
 } from '../expenses/expense.schema';
 import { ExpenseSplitDto } from '../expenses/dto/expense-split.dto';
-
-interface TelegramUpdate {
-  message?: {
-    chat: { id: number };
-    text?: string;
-    from: { id: number; first_name?: string; username?: string };
-  };
-  callback_query?: {
-    id: string;
-    from: { id: number };
-    data: string;
-    message: { chat: { id: number }; message_id: number };
-  };
-}
-
-interface PopulatedUser {
-  _id: Types.ObjectId;
-  firstName: string;
-  lastName: string;
-  email?: string;
-}
-
-interface PopulatedParticipant {
-  _id: Types.ObjectId;
-  guestName?: string;
-  guestEmail?: string;
-  userId?: PopulatedUser | Types.ObjectId;
-}
-
-interface PopulatedBudget {
-  _id: Types.ObjectId;
-  name: string;
-  tripId: Types.ObjectId;
-  amount: number;
-  currency: string;
-  spent: number;
-  createdBy: Types.ObjectId;
-  createdAt: Date;
-  updatedAt: Date;
-}
+import { TelegramUpdate } from './types/telegram.types';
+import { PopulatedParticipant, PopulatedBudget } from './types/populated.types';
+import { TelegramClientService } from './telegram/telegram-client.service';
+import { UserLinkingService } from './linking/user-linking.service';
+import { BotUpdateRepository } from './repositories/bot-update.repository';
+import { getCardId } from './utils/bot-helpers';
 
 @Injectable()
-export class BotService implements OnModuleInit {
+export class BotService {
   private readonly logger = new Logger(BotService.name);
-  private readonly botToken: string | undefined;
-  private readonly telegramApiUrl: string;
-  private readonly configService: ConfigService;
 
   constructor(
-    configService: ConfigService,
     @InjectModel(BotUpdate.name)
     private botUpdateModel: Model<BotUpdateDocument>,
-    @InjectModel(TelegramLinkToken.name)
-    private linkTokenModel: Model<TelegramLinkTokenDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private messageParser: MessageParserService,
     private conversationalService: ConversationalService,
@@ -89,70 +43,10 @@ export class BotService implements OnModuleInit {
     private participantsService: ParticipantsService,
     private budgetsService: BudgetsService,
     private cardsService: CardsService,
-  ) {
-    this.configService = configService;
-    this.botToken = configService.get<string>('TELEGRAM_BOT_TOKEN');
-    if (!this.botToken) {
-      this.logger.warn('TELEGRAM_BOT_TOKEN no está configurado');
-      this.telegramApiUrl = '';
-    } else {
-      this.telegramApiUrl = `https://api.telegram.org/bot${this.botToken}`;
-    }
-  }
-
-  async onModuleInit() {
-    await this.configureWebhook();
-  }
-
-  async configureWebhook(): Promise<void> {
-    if (!this.botToken) {
-      this.logger.warn(
-        'TELEGRAM_BOT_TOKEN no configurado, no se puede configurar webhook',
-      );
-      return;
-    }
-
-    const webhookUrl = this.getWebhookUrl();
-    if (!webhookUrl) {
-      this.logger.warn(
-        'No se pudo determinar la URL del webhook. Configúrala manualmente o define WEBHOOK_URL',
-      );
-      return;
-    }
-
-    try {
-      const response = await fetch(`${this.telegramApiUrl}/setWebhook`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: webhookUrl }),
-      });
-
-      const data = (await response.json()) as {
-        ok: boolean;
-        description?: string;
-      };
-
-      if (data.ok) {
-        this.logger.log(`✅ Webhook configurado: ${webhookUrl}`);
-      } else {
-        this.logger.error(`❌ Error configurando webhook: ${data.description}`);
-      }
-    } catch (error) {
-      this.logger.error('Error configurando webhook:', error);
-    }
-  }
-
-  private getWebhookUrl(): string | null {
-    if (process.env.WEBHOOK_URL) {
-      return process.env.WEBHOOK_URL;
-    }
-
-    if (process.env.NODE_ENV === 'production') {
-      return 'https://finanzapp-travels-backend.fly.dev/api/bot/webhook';
-    }
-
-    return null;
-  }
+    private telegramClient: TelegramClientService,
+    private userLinkingService: UserLinkingService,
+    private botUpdateRepository: BotUpdateRepository,
+  ) {}
 
   async handleUpdate(update: TelegramUpdate): Promise<void> {
     this.logger.log('=== handleUpdate llamado ===');
@@ -192,19 +86,20 @@ export class BotService implements OnModuleInit {
 
     if (text.startsWith('/start')) {
       this.logger.log('Es comando /start');
-      await this.handleStartCommand(telegramUserId, text);
+      await this.userLinkingService.handleStartCommand(telegramUserId, text);
       return;
     }
 
     this.logger.log('Obteniendo botUpdate...');
-    const botUpdate = await this.getOrCreateBotUpdate(telegramUserId);
+    const botUpdate =
+      await this.botUpdateRepository.getOrCreateBotUpdate(telegramUserId);
     this.logger.log(
       `botUpdate.userId: ${botUpdate.userId?.toString() ?? 'undefined'}`,
     );
 
     if (!botUpdate.userId) {
       this.logger.log('Usuario no vinculado, enviando mensaje...');
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '⚠️ Primero debes vincular tu cuenta. Ve a la web y genera un token de vinculación, luego usa /start <token>',
       );
@@ -215,73 +110,6 @@ export class BotService implements OnModuleInit {
     this.logger.log('Usuario vinculado, manejando estado de conversación...');
     await this.handleConversationState(botUpdate, text, telegramUserId);
     this.logger.log('handleConversationState completado');
-  }
-
-  private async handleStartCommand(
-    telegramUserId: number,
-    command: string,
-  ): Promise<void> {
-    const parts = command.split(' ');
-
-    if (parts.length === 1) {
-      await this.sendMessage(
-        telegramUserId,
-        '👋 ¡Hola! Soy el bot de FinanzApp Travels.\n\n' +
-          'Para vincular tu cuenta:\n' +
-          '1. Inicia sesión en la web\n' +
-          '2. Ve a Configuración → Bot de Telegram\n' +
-          '3. Copia el token que se genera\n' +
-          '4. Envíame: /start <token>\n\n' +
-          'Ejemplo: /start abc123xyz',
-      );
-      return;
-    }
-
-    const token = parts[1];
-    await this.linkUserWithToken(telegramUserId, token);
-  }
-
-  private async linkUserWithToken(
-    telegramUserId: number,
-    token: string,
-  ): Promise<void> {
-    const linkToken = await this.linkTokenModel.findOne({ token }).exec();
-
-    if (!linkToken) {
-      await this.sendMessage(telegramUserId, '❌ Token inválido o expirado.');
-      return;
-    }
-
-    if (linkToken.expiresAt < new Date()) {
-      await this.sendMessage(
-        telegramUserId,
-        '❌ El token ha expirado. Genera uno nuevo en la web.',
-      );
-      await linkToken.deleteOne();
-      return;
-    }
-
-    const user = await this.userModel.findById(linkToken.userId).exec();
-    if (!user) {
-      await this.sendMessage(telegramUserId, '❌ Usuario no encontrado.');
-      return;
-    }
-
-    user.telegramUserId = telegramUserId;
-    await user.save();
-
-    const botUpdate = await this.getOrCreateBotUpdate(telegramUserId);
-    botUpdate.userId = user._id;
-    await botUpdate.save();
-
-    await linkToken.deleteOne();
-
-    await this.sendMessage(
-      telegramUserId,
-      '✅ ¡Cuenta vinculada exitosamente!\n\n' +
-        'Ahora puedes cargar gastos enviándome mensajes informales.\n' +
-        'Ejemplo: "Cena 120 usd compartido"',
-    );
   }
 
   private async handleConversationState(
@@ -351,7 +179,7 @@ export class BotService implements OnModuleInit {
         break;
       case ConversationState.CONFIRMING:
         this.logger.log('Estado CONFIRMING, enviando mensaje...');
-        await this.sendMessage(
+        await this.telegramClient.sendMessage(
           telegramUserId,
           '⏳ Espera la confirmación del botón. Si quieres cancelar, usa el botón ❌ Cancelar.',
         );
@@ -369,7 +197,7 @@ export class BotService implements OnModuleInit {
     this.logger.log('=== handleNewExpenseMessage llamado ===');
 
     if (!botUpdate.userId) {
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '⚠️ Error: Usuario no vinculado. Usa /start <token> para vincular tu cuenta.',
       );
@@ -379,7 +207,7 @@ export class BotService implements OnModuleInit {
     const trips = await this.tripsService.findAll(botUpdate.userId.toString());
 
     if (trips.length === 0) {
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '⚠️ No tienes viajes activos. Crea uno desde la web primero.',
       );
@@ -403,7 +231,7 @@ export class BotService implements OnModuleInit {
     this.logger.log(`Parsed expense: ${JSON.stringify(parsed)}`);
 
     if (!parsed.amount) {
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '⚠️ No pude detectar el monto. Por favor, incluye un número.\n' +
           'Ejemplo: "Cena 120 usd"',
@@ -501,7 +329,11 @@ export class BotService implements OnModuleInit {
       callback_data: `trip:${trip._id.toString()}`,
     }));
 
-    await this.sendMessageWithButtons(telegramUserId, message, buttons);
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
   }
 
   private async askForBucket(
@@ -560,7 +392,11 @@ export class BotService implements OnModuleInit {
 
     buttons.push({ text: '❌ Sin presupuesto', callback_data: 'bucket:none' });
 
-    await this.sendMessageWithButtons(telegramUserId, message, buttons);
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
   }
 
   private async handleTripSelection(
@@ -625,7 +461,7 @@ export class BotService implements OnModuleInit {
       const errorMessage =
         conversationalResponse?.message ||
         '⚠️ No encontré ese viaje. Por favor, selecciona uno de los botones o escribe el nombre exacto.';
-      await this.sendMessage(telegramUserId, errorMessage);
+      await this.telegramClient.sendMessage(telegramUserId, errorMessage);
     }
   }
 
@@ -794,7 +630,7 @@ export class BotService implements OnModuleInit {
       const errorMessage =
         conversationalResponse?.message ||
         '⚠️ No encontré ese bucket. Por favor, selecciona uno de los botones o escribe el nombre exacto.';
-      await this.sendMessage(telegramUserId, errorMessage);
+      await this.telegramClient.sendMessage(telegramUserId, errorMessage);
     }
   }
 
@@ -880,7 +716,11 @@ export class BotService implements OnModuleInit {
       });
     }
 
-    await this.sendMessageWithButtons(telegramUserId, message, buttons);
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
   }
 
   private async handlePayerSelection(
@@ -1001,7 +841,7 @@ export class BotService implements OnModuleInit {
       const errorMessage =
         conversationalResponse?.message ||
         '⚠️ No entendí quién pagó. Por favor, selecciona uno de los botones o escribe el nombre.';
-      await this.sendMessage(telegramUserId, errorMessage);
+      await this.telegramClient.sendMessage(telegramUserId, errorMessage);
     }
   }
 
@@ -1059,7 +899,7 @@ export class BotService implements OnModuleInit {
       conversationalResponse?.message ||
       '🏪 ¿En qué comercio hiciste este gasto? (Puedes escribir "sin comercio" si no aplica)';
 
-    await this.sendMessage(telegramUserId, message);
+    await this.telegramClient.sendMessage(telegramUserId, message);
   }
 
   private async handleMerchantSelection(
@@ -1141,7 +981,11 @@ export class BotService implements OnModuleInit {
       { text: '💳 Tarjeta', callback_data: 'payment:card' },
     ];
 
-    await this.sendMessageWithButtons(telegramUserId, message, buttons);
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
   }
 
   private async handlePaymentMethodSelection(
@@ -1192,7 +1036,7 @@ export class BotService implements OnModuleInit {
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
     } else {
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '⚠️ No entendí. Por favor, responde "efectivo" o "tarjeta".',
       );
@@ -1233,7 +1077,7 @@ export class BotService implements OnModuleInit {
         conversationalResponse?.message ||
         '⚠️ No hay tarjetas registradas para este viaje. Por favor, registra una tarjeta primero desde la web.';
 
-      await this.sendMessage(telegramUserId, message);
+      await this.telegramClient.sendMessage(telegramUserId, message);
       return;
     }
 
@@ -1249,7 +1093,7 @@ export class BotService implements OnModuleInit {
       budgets: [],
       pendingExpense: botUpdate.pendingExpense,
       cards: cards.map((c) => ({
-        id: this.getCardId(c),
+        id: getCardId(c),
         name: c.name,
         lastFourDigits: c.lastFourDigits,
       })),
@@ -1264,10 +1108,14 @@ export class BotService implements OnModuleInit {
 
     const buttons = cards.slice(0, 10).map((card) => ({
       text: `${card.name} (****${card.lastFourDigits})`,
-      callback_data: `card:${this.getCardId(card)}`,
+      callback_data: `card:${getCardId(card)}`,
     }));
 
-    await this.sendMessageWithButtons(telegramUserId, message, buttons);
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
   }
 
   private async handleCardSelection(
@@ -1299,13 +1147,13 @@ export class BotService implements OnModuleInit {
     });
 
     if (matchedCard) {
-      updatedBotUpdate.pendingExpense.cardId = this.getCardId(matchedCard);
+      updatedBotUpdate.pendingExpense.cardId = getCardId(matchedCard);
       updatedBotUpdate.markModified('pendingExpense');
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
     } else {
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '⚠️ No encontré esa tarjeta. Por favor, selecciona una de las opciones o escribe el nombre o los últimos 4 dígitos.',
       );
@@ -1329,10 +1177,11 @@ export class BotService implements OnModuleInit {
     const telegramUserId = callback.from.id;
     const data = callback.data;
     const callbackQueryId = callback.id;
-    let botUpdate = await this.getOrCreateBotUpdate(telegramUserId);
+    let botUpdate =
+      await this.botUpdateRepository.getOrCreateBotUpdate(telegramUserId);
 
     if (!botUpdate.userId) {
-      await this.answerCallbackQuery(
+      await this.telegramClient.answerCallbackQuery(
         callbackQueryId,
         '⚠️ Debes vincular tu cuenta primero.',
       );
@@ -1353,7 +1202,7 @@ export class BotService implements OnModuleInit {
           .findById(botUpdate._id)
           .exec();
         if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
-          await this.answerCallbackQuery(
+          await this.telegramClient.answerCallbackQuery(
             callbackQueryId,
             '⚠️ Error: No se encontró el gasto.',
           );
@@ -1363,7 +1212,7 @@ export class BotService implements OnModuleInit {
         updatedBotUpdate.currentTripId = new Types.ObjectId(tripId);
         await updatedBotUpdate.save();
         await this.continueWithTrip(updatedBotUpdate, telegramUserId, tripId);
-        await this.answerCallbackQuery(callbackQueryId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
       } else if (data.startsWith('bucket:')) {
         const bucketId = data.replace('bucket:', '');
         this.logger.log(`Callback bucket recibido - bucketId raw: ${bucketId}`);
@@ -1372,7 +1221,7 @@ export class BotService implements OnModuleInit {
           .findById(botUpdate._id)
           .exec();
         if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
-          await this.answerCallbackQuery(
+          await this.telegramClient.answerCallbackQuery(
             callbackQueryId,
             '⚠️ Error: No se encontró el gasto.',
           );
@@ -1397,7 +1246,7 @@ export class BotService implements OnModuleInit {
           updatedBotUpdate.state = ConversationState.ASKING_PAYER;
           await updatedBotUpdate.save();
           await this.askForPayer(updatedBotUpdate, telegramUserId);
-          await this.answerCallbackQuery(callbackQueryId);
+          await this.telegramClient.answerCallbackQuery(callbackQueryId);
           return;
         }
 
@@ -1417,7 +1266,7 @@ export class BotService implements OnModuleInit {
           savedBotUpdate || updatedBotUpdate,
           telegramUserId,
         );
-        await this.answerCallbackQuery(callbackQueryId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
       } else if (data.startsWith('payer:')) {
         await this.handlePayerCallback(
           botUpdate,
@@ -1431,7 +1280,7 @@ export class BotService implements OnModuleInit {
           .findById(botUpdate._id)
           .exec();
         if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
-          await this.answerCallbackQuery(
+          await this.telegramClient.answerCallbackQuery(
             callbackQueryId,
             '⚠️ Error: No se encontró el gasto.',
           );
@@ -1450,14 +1299,14 @@ export class BotService implements OnModuleInit {
           await updatedBotUpdate.save();
           await this.showConfirmation(updatedBotUpdate, telegramUserId);
         }
-        await this.answerCallbackQuery(callbackQueryId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
       } else if (data.startsWith('card:')) {
         const cardId = data.replace('card:', '');
         const updatedBotUpdate = await this.botUpdateModel
           .findById(botUpdate._id)
           .exec();
         if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
-          await this.answerCallbackQuery(
+          await this.telegramClient.answerCallbackQuery(
             callbackQueryId,
             '⚠️ Error: No se encontró el gasto.',
           );
@@ -1469,18 +1318,18 @@ export class BotService implements OnModuleInit {
         updatedBotUpdate.state = ConversationState.CONFIRMING;
         await updatedBotUpdate.save();
         await this.showConfirmation(updatedBotUpdate, telegramUserId);
-        await this.answerCallbackQuery(callbackQueryId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
       } else if (data.startsWith('confirm:')) {
         if (data === 'confirm:yes') {
           await this.confirmExpense(botUpdate, telegramUserId);
         } else {
           await this.cancelExpense(botUpdate, telegramUserId);
         }
-        await this.answerCallbackQuery(callbackQueryId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
       }
     } catch (error) {
       this.logger.error('Error procesando callback:', error);
-      await this.answerCallbackQuery(
+      await this.telegramClient.answerCallbackQuery(
         callbackQueryId,
         '❌ Ocurrió un error. Por favor, intenta de nuevo.',
       );
@@ -1497,7 +1346,7 @@ export class BotService implements OnModuleInit {
       .findById(botUpdate._id)
       .exec();
     if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '⚠️ Error: No se encontró el gasto. Por favor, intenta de nuevo.',
       );
@@ -1521,7 +1370,7 @@ export class BotService implements OnModuleInit {
         updatedBotUpdate.state = ConversationState.ASKING_MERCHANT;
         await updatedBotUpdate.save();
         await this.askForMerchant(updatedBotUpdate, telegramUserId);
-        await this.answerCallbackQuery(callbackQueryId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
         return;
       }
 
@@ -1529,14 +1378,14 @@ export class BotService implements OnModuleInit {
         updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
         await updatedBotUpdate.save();
         await this.askForPaymentMethod(updatedBotUpdate, telegramUserId);
-        await this.answerCallbackQuery(callbackQueryId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
         return;
       }
 
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
-      await this.answerCallbackQuery(callbackQueryId);
+      await this.telegramClient.answerCallbackQuery(callbackQueryId);
     } else if (data.startsWith('payer:participant:')) {
       const participantId = data.replace('payer:participant:', '');
       updatedBotUpdate.pendingExpense.paidByParticipantId = participantId;
@@ -1546,7 +1395,7 @@ export class BotService implements OnModuleInit {
         updatedBotUpdate.state = ConversationState.ASKING_MERCHANT;
         await updatedBotUpdate.save();
         await this.askForMerchant(updatedBotUpdate, telegramUserId);
-        await this.answerCallbackQuery(callbackQueryId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
         return;
       }
 
@@ -1554,14 +1403,14 @@ export class BotService implements OnModuleInit {
         updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
         await updatedBotUpdate.save();
         await this.askForPaymentMethod(updatedBotUpdate, telegramUserId);
-        await this.answerCallbackQuery(callbackQueryId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
         return;
       }
 
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
-      await this.answerCallbackQuery(callbackQueryId);
+      await this.telegramClient.answerCallbackQuery(callbackQueryId);
     } else if (data === 'payer:show_more') {
       const tripId = updatedBotUpdate.currentTripId!.toString();
       const participants = await this.participantsService.findByTrip(
@@ -1585,12 +1434,12 @@ export class BotService implements OnModuleInit {
         };
       });
 
-      await this.sendMessageWithButtons(
+      await this.telegramClient.sendMessageWithButtons(
         telegramUserId,
         '👥 Selecciona quién pagó:',
         buttons,
       );
-      await this.answerCallbackQuery(callbackQueryId);
+      await this.telegramClient.answerCallbackQuery(callbackQueryId);
     }
   }
 
@@ -1704,7 +1553,11 @@ export class BotService implements OnModuleInit {
       { text: '❌ Cancelar', callback_data: 'confirm:no' },
     ];
 
-    await this.sendMessageWithButtons(telegramUserId, message, buttons);
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
   }
 
   private async confirmExpense(
@@ -1715,7 +1568,7 @@ export class BotService implements OnModuleInit {
       .findById(botUpdate._id)
       .exec();
     if (!updatedBotUpdate) {
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '❌ Error: No se pudo cargar el gasto.',
       );
@@ -1724,7 +1577,7 @@ export class BotService implements OnModuleInit {
 
     const expense = updatedBotUpdate.pendingExpense;
     if (!expense || !updatedBotUpdate.currentTripId) {
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '❌ Error: No hay gasto para confirmar.',
       );
@@ -1794,10 +1647,13 @@ export class BotService implements OnModuleInit {
         conversationalResponse?.message ||
         '✅ ¡Gasto guardado exitosamente!\n\nPuedes verlo en tu dashboard web.';
 
-      await this.sendMessage(telegramUserId, confirmationMessage);
+      await this.telegramClient.sendMessage(
+        telegramUserId,
+        confirmationMessage,
+      );
     } catch (error) {
       this.logger.error('Error creando gasto:', error);
-      await this.sendMessage(
+      await this.telegramClient.sendMessage(
         telegramUserId,
         '❌ Error al guardar el gasto. Por favor, intenta nuevamente.',
       );
@@ -1812,173 +1668,13 @@ export class BotService implements OnModuleInit {
     botUpdate.pendingExpense = undefined;
     await botUpdate.save();
 
-    await this.sendMessage(telegramUserId, '❌ Gasto cancelado.');
-  }
-
-  private async determineActiveTrip(
-    botUpdate: BotUpdateDocument,
-  ): Promise<string | null> {
-    if (botUpdate.currentTripId) {
-      try {
-        await this.tripsService.findOne(
-          botUpdate.currentTripId.toString(),
-          botUpdate.userId!.toString(),
-        );
-        return botUpdate.currentTripId.toString();
-      } catch {
-        // El viaje ya no es válido, buscar otro
-      }
-    }
-
-    const trips = await this.tripsService.findAll(botUpdate.userId!.toString());
-
-    if (trips.length === 0) {
-      return null;
-    }
-
-    if (trips.length === 1) {
-      const firstTrip = trips[0] as unknown as {
-        _id: Types.ObjectId;
-      } & Record<string, unknown>;
-      const tripId = firstTrip._id.toString();
-      botUpdate.currentTripId = new Types.ObjectId(tripId);
-      await botUpdate.save();
-      return tripId;
-    }
-
-    const mostRecentTrip = trips[0] as unknown as {
-      _id: Types.ObjectId;
-    } & Record<string, unknown>;
-    const tripId = mostRecentTrip._id.toString();
-    botUpdate.currentTripId = new Types.ObjectId(tripId);
-    await botUpdate.save();
-    return tripId;
-  }
-
-  private getCardId(card: unknown): string {
-    const cardAny = card as { _id?: Types.ObjectId | string; id?: string };
-    if (cardAny._id) {
-      return typeof cardAny._id === 'string'
-        ? cardAny._id
-        : cardAny._id.toString();
-    }
-    if (cardAny.id) {
-      return cardAny.id;
-    }
-    return '';
-  }
-
-  private async sendMessage(chatId: number, text: string): Promise<void> {
-    if (!this.botToken) {
-      this.logger.warn('Bot token no configurado, no se puede enviar mensaje');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${this.telegramApiUrl}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          parse_mode: 'Markdown',
-        }),
-      });
-
-      if (!response.ok) {
-        const error = (await response.json()) as Record<string, unknown>;
-        this.logger.error('Error enviando mensaje a Telegram:', error);
-      }
-    } catch (error) {
-      this.logger.error('Error en sendMessage:', error);
-    }
-  }
-
-  private async sendMessageWithButtons(
-    chatId: number,
-    text: string,
-    buttons: Array<{ text: string; callback_data: string }>,
-  ): Promise<void> {
-    if (!this.botToken) return;
-
-    try {
-      const MAX_COLUMNS = 2;
-      const keyboard: Array<Array<{ text: string; callback_data: string }>> =
-        [];
-
-      for (let i = 0; i < buttons.length; i += MAX_COLUMNS) {
-        keyboard.push(buttons.slice(i, i + MAX_COLUMNS));
-      }
-
-      const response = await fetch(`${this.telegramApiUrl}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: keyboard,
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        const error = (await response.json()) as Record<string, unknown>;
-        this.logger.error('Error enviando mensaje con botones:', error);
-      }
-    } catch (error) {
-      this.logger.error('Error en sendMessageWithButtons:', error);
-    }
-  }
-
-  private async answerCallbackQuery(
-    queryId: string,
-    text?: string,
-  ): Promise<void> {
-    if (!this.botToken) return;
-
-    try {
-      await fetch(`${this.telegramApiUrl}/answerCallbackQuery`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          callback_query_id: queryId,
-          text,
-        }),
-      });
-    } catch (error) {
-      this.logger.error('Error en answerCallbackQuery:', error);
-    }
-  }
-
-  private async getOrCreateBotUpdate(
-    telegramUserId: number,
-  ): Promise<BotUpdateDocument> {
-    let botUpdate = await this.botUpdateModel
-      .findOne({ telegramUserId })
-      .exec();
-
-    if (!botUpdate) {
-      botUpdate = new this.botUpdateModel({
-        telegramUserId,
-        state: ConversationState.IDLE,
-      });
-      await botUpdate.save();
-    }
-
-    return botUpdate;
+    await this.telegramClient.sendMessage(
+      telegramUserId,
+      '❌ Gasto cancelado.',
+    );
   }
 
   async generateLinkToken(userId: string): Promise<string> {
-    const token = crypto.randomBytes(32).toString('hex');
-
-    await this.linkTokenModel.create({
-      userId: new Types.ObjectId(userId),
-      token,
-      expiresAt: new Date(Date.now() + 3600 * 1000),
-    });
-
-    return token;
+    return this.userLinkingService.generateLinkToken(userId);
   }
 }

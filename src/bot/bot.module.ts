@@ -16,6 +16,9 @@ import { TripsModule } from '../trips/trips.module';
 import { ParticipantsModule } from '../participants/participants.module';
 import { BudgetsModule } from '../budgets/budgets.module';
 import { CardsModule } from '../cards/cards.module';
+import { TelegramClientService } from './telegram/telegram-client.service';
+import { UserLinkingService } from './linking/user-linking.service';
+import { BotUpdateRepository } from './repositories/bot-update.repository';
 
 @Module({
   imports: [
@@ -36,6 +39,9 @@ import { CardsModule } from '../cards/cards.module';
     MessageParserService,
     LLMParserService,
     ConversationalService,
+    TelegramClientService,
+    UserLinkingService,
+    BotUpdateRepository,
   ],
   exports: [BotService],
 })
