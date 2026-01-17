@@ -4,6 +4,7 @@ import { Document, Types } from 'mongoose';
 export enum ConversationState {
   IDLE = 'idle',
   PARSING_EXPENSE = 'parsing_expense',
+  ASKING_TRIP = 'asking_trip',
   ASKING_BUCKET = 'asking_bucket',
   ASKING_PAYER = 'asking_payer',
   ASKING_SPLIT = 'asking_split',

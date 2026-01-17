@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -63,10 +63,11 @@ interface PopulatedBudget {
 }
 
 @Injectable()
-export class BotService {
+export class BotService implements OnModuleInit {
   private readonly logger = new Logger(BotService.name);
   private readonly botToken: string | undefined;
   private readonly telegramApiUrl: string;
+  private readonly configService: ConfigService;
 
   constructor(
     configService: ConfigService,
@@ -81,6 +82,7 @@ export class BotService {
     private participantsService: ParticipantsService,
     private budgetsService: BudgetsService,
   ) {
+    this.configService = configService;
     this.botToken = configService.get<string>('TELEGRAM_BOT_TOKEN');
     if (!this.botToken) {
       this.logger.warn('TELEGRAM_BOT_TOKEN no está configurado');
@@ -88,6 +90,60 @@ export class BotService {
     } else {
       this.telegramApiUrl = `https://api.telegram.org/bot${this.botToken}`;
     }
+  }
+
+  async onModuleInit() {
+    await this.configureWebhook();
+  }
+
+  async configureWebhook(): Promise<void> {
+    if (!this.botToken) {
+      this.logger.warn(
+        'TELEGRAM_BOT_TOKEN no configurado, no se puede configurar webhook',
+      );
+      return;
+    }
+
+    const webhookUrl = this.getWebhookUrl();
+    if (!webhookUrl) {
+      this.logger.warn(
+        'No se pudo determinar la URL del webhook. Configúrala manualmente o define WEBHOOK_URL',
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(`${this.telegramApiUrl}/setWebhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: webhookUrl }),
+      });
+
+      const data = (await response.json()) as {
+        ok: boolean;
+        description?: string;
+      };
+
+      if (data.ok) {
+        this.logger.log(`✅ Webhook configurado: ${webhookUrl}`);
+      } else {
+        this.logger.error(`❌ Error configurando webhook: ${data.description}`);
+      }
+    } catch (error) {
+      this.logger.error('Error configurando webhook:', error);
+    }
+  }
+
+  private getWebhookUrl(): string | null {
+    if (process.env.WEBHOOK_URL) {
+      return process.env.WEBHOOK_URL;
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+      return 'https://finanzapp-travels-backend.fly.dev/api/bot/webhook';
+    }
+
+    return null;
   }
 
   async handleUpdate(update: TelegramUpdate): Promise<void> {
@@ -243,6 +299,10 @@ export class BotService {
         await this.handleNewExpenseMessage(botUpdate, text, telegramUserId);
         this.logger.log('handleNewExpenseMessage completado');
         break;
+      case ConversationState.ASKING_TRIP:
+        this.logger.log('Estado ASKING_TRIP, llamando handleTripSelection...');
+        await this.handleTripSelection(botUpdate, text, telegramUserId);
+        break;
       case ConversationState.ASKING_BUCKET:
         this.logger.log(
           'Estado ASKING_BUCKET, llamando handleBucketSelection...',
@@ -279,16 +339,6 @@ export class BotService {
     telegramUserId: number,
   ): Promise<void> {
     this.logger.log('=== handleNewExpenseMessage llamado ===');
-    this.logger.log('Determinando viaje activo...');
-    const tripId = await this.determineActiveTrip(botUpdate);
-    this.logger.log(`Trip ID obtenido: ${tripId}`);
-    if (!tripId) {
-      await this.sendMessage(
-        telegramUserId,
-        '⚠️ No tienes viajes activos. Crea uno desde la web primero.',
-      );
-      return;
-    }
 
     if (!botUpdate.userId) {
       await this.sendMessage(
@@ -298,51 +348,25 @@ export class BotService {
       return;
     }
 
-    const trip = await this.tripsService.findOne(
-      tripId,
-      botUpdate.userId.toString(),
-    );
-    const participants = await this.participantsService.findByTrip(
-      tripId,
-      botUpdate.userId.toString(),
-    );
-    const budgetsResult: unknown = await this.budgetsService.findAll(
-      tripId,
-      botUpdate.userId.toString(),
-    );
-    const budgets = budgetsResult as PopulatedBudget[];
+    const trips = await this.tripsService.findAll(botUpdate.userId.toString());
+
+    if (trips.length === 0) {
+      await this.sendMessage(
+        telegramUserId,
+        '⚠️ No tienes viajes activos. Crea uno desde la web primero.',
+      );
+      return;
+    }
 
     const user = await this.userModel.findById(botUpdate.userId).exec();
     const userName = user
       ? `${user.firstName} ${user.lastName}`.trim()
       : 'Usuario';
 
-    const typedParticipants = participants as unknown as PopulatedParticipant[];
-
     const parseContext = {
-      tripName: trip.name,
-      participants: typedParticipants.map((p) => ({
-        id: p._id.toString(),
-        name:
-          p.guestName ||
-          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
-            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
-            : 'Participante'),
-        isUser: (() => {
-          if (!p.userId) return false;
-          if (p.userId instanceof Types.ObjectId) {
-            return p.userId.toString() === botUpdate.userId!.toString();
-          }
-          if (typeof p.userId === 'object' && '_id' in p.userId) {
-            return p.userId._id.toString() === botUpdate.userId!.toString();
-          }
-          return false;
-        })(),
-      })),
-      budgets: budgets.map((b) => ({
-        id: b._id.toString(),
-        name: b.name,
-      })),
+      tripName: 'Temp',
+      participants: [],
+      budgets: [],
       userName,
     };
 
@@ -361,17 +385,26 @@ export class BotService {
 
     let merchantName: string | undefined;
     const merchantMatch = text.match(
-      /\ben\s+([a-zA-ZáéíóúñÁÉÍÓÚÑ]+(?:\s+[a-zA-ZáéíóúñÁÉÍÓÚÑ]+)*)(?:\s+\d|\s+usd|\s+ars|\s+eur|$)/i,
+      /\ben\s+(?:el\s+|la\s+|los\s+|las\s+)?([a-zA-ZáéíóúñÁÉÍÓÚÑ]+(?:\s+[a-zA-ZáéíóúñÁÉÍÓÚÑ]+){0,1})(?:\s+(?:comprando|compré|comprado|pagando|pagué|pagado|comiendo|comí|tomando|tomé|haciendo|hice|viendo|vi|\d|\b(?:usd|ars|eur|dolar|peso|euro)\b))/i,
     );
     if (merchantMatch) {
       merchantName = merchantMatch[1].trim();
-      merchantName = merchantName
-        .split(' ')
-        .map(
-          (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
-        )
-        .join(' ');
-      this.logger.log(`Extracted merchantName: ${merchantName}`);
+
+      const articles = /^(el|la|los|las)\s+/i;
+      merchantName = merchantName.replace(articles, '');
+
+      if (merchantName) {
+        merchantName = merchantName
+          .split(' ')
+          .map(
+            (word) =>
+              word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
+          )
+          .join(' ');
+        this.logger.log(`Extracted merchantName: ${merchantName}`);
+      } else {
+        merchantName = undefined;
+      }
     }
 
     botUpdate.pendingExpense = {
@@ -381,45 +414,47 @@ export class BotService {
       merchantName,
       isDivisible: parsed.isDivisible || false,
     };
-    botUpdate.currentTripId = new Types.ObjectId(tripId);
+
+    if (trips.length === 1) {
+      const firstTrip = trips[0] as unknown as {
+        _id: Types.ObjectId;
+      } & Record<string, unknown>;
+      const tripId = firstTrip._id.toString();
+      botUpdate.currentTripId = new Types.ObjectId(tripId);
+      await botUpdate.save();
+
+      await this.continueWithTrip(botUpdate, telegramUserId, tripId);
+      return;
+    }
+
+    botUpdate.state = ConversationState.ASKING_TRIP;
     await botUpdate.save();
-
-    this.logger.log(`Using trip: ${tripId} (${trip.name})`);
-    this.logger.log(
-      `Pending expense saved: ${JSON.stringify(botUpdate.pendingExpense)}`,
+    await this.askForTrip(
+      botUpdate,
+      telegramUserId,
+      trips as unknown as Array<
+        { _id: Types.ObjectId; name?: string } & Record<string, unknown>
+      >,
     );
+  }
 
-    if (budgets.length > 0 && !parsed.budgetName) {
-      botUpdate.state = ConversationState.ASKING_BUCKET;
-      await botUpdate.save();
-      await this.askForBucket(botUpdate, telegramUserId, budgets);
-      return;
-    }
+  private async askForTrip(
+    botUpdate: BotUpdateDocument,
+    telegramUserId: number,
+    trips: Array<
+      { _id: Types.ObjectId; name?: string } & Record<string, unknown>
+    >,
+  ): Promise<void> {
+    const buttons = trips.slice(0, 10).map((trip) => ({
+      text: trip.name || 'Viaje sin nombre',
+      callback_data: `trip:${trip._id.toString()}`,
+    }));
 
-    let budgetId: string | undefined;
-    if (parsed.budgetName) {
-      const matchedBudget = budgets.find(
-        (b) => b.name.toLowerCase() === parsed.budgetName!.toLowerCase(),
-      );
-      if (matchedBudget) {
-        budgetId = matchedBudget._id.toString();
-        botUpdate.pendingExpense.budgetId = budgetId;
-      }
-    }
-
-    if (budgets.length === 0) {
-      botUpdate.state = ConversationState.ASKING_PAYER;
-      await botUpdate.save();
-      await this.askForPayer(botUpdate, telegramUserId);
-      return;
-    }
-
-    if (parsed.budgetName && budgetId) {
-      botUpdate.state = ConversationState.ASKING_PAYER;
-      await botUpdate.save();
-      await this.askForPayer(botUpdate, telegramUserId);
-      return;
-    }
+    await this.sendMessageWithButtons(
+      telegramUserId,
+      '✈️ ¿Para qué viaje es este gasto?',
+      buttons,
+    );
   }
 
   private async askForBucket(
@@ -439,6 +474,85 @@ export class BotService {
       '📂 ¿A qué bucket corresponde este gasto?',
       buttons,
     );
+  }
+
+  private async handleTripSelection(
+    botUpdate: BotUpdateDocument,
+    text: string,
+    telegramUserId: number,
+  ): Promise<void> {
+    const trips = await this.tripsService.findAll(botUpdate.userId!.toString());
+    const typedTrips = trips as unknown as Array<
+      {
+        _id: Types.ObjectId;
+        name?: string;
+      } & Record<string, unknown>
+    >;
+
+    const matchedTrip = typedTrips.find((t) =>
+      t.name?.toLowerCase().includes(text.toLowerCase()),
+    );
+
+    if (matchedTrip) {
+      const tripId = matchedTrip._id.toString();
+      botUpdate.currentTripId = new Types.ObjectId(tripId);
+      await botUpdate.save();
+      await this.continueWithTrip(botUpdate, telegramUserId, tripId);
+    } else {
+      await this.sendMessage(
+        telegramUserId,
+        '⚠️ No encontré ese viaje. Por favor, selecciona uno de los botones o escribe el nombre exacto.',
+      );
+    }
+  }
+
+  private async continueWithTrip(
+    botUpdate: BotUpdateDocument,
+    telegramUserId: number,
+    tripId: string,
+  ): Promise<void> {
+    const updatedBotUpdate = await this.botUpdateModel
+      .findById(botUpdate._id)
+      .exec();
+    if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+      return;
+    }
+
+    const budgetsResult: unknown = await this.budgetsService.findAll(
+      tripId,
+      updatedBotUpdate.userId!.toString(),
+    );
+    const budgets = budgetsResult as PopulatedBudget[];
+
+    const parsed = updatedBotUpdate.pendingExpense;
+    if (!parsed) return;
+
+    if (budgets.length > 0 && !parsed.budgetId) {
+      updatedBotUpdate.state = ConversationState.ASKING_BUCKET;
+      await updatedBotUpdate.save();
+      await this.askForBucket(updatedBotUpdate, telegramUserId, budgets);
+      return;
+    }
+
+    let budgetId: string | undefined;
+    if (parsed.budgetId) {
+      budgetId = parsed.budgetId;
+      updatedBotUpdate.pendingExpense.budgetId = budgetId;
+    }
+
+    if (budgets.length === 0) {
+      updatedBotUpdate.state = ConversationState.ASKING_PAYER;
+      await updatedBotUpdate.save();
+      await this.askForPayer(updatedBotUpdate, telegramUserId);
+      return;
+    }
+
+    if (parsed.budgetId && budgetId) {
+      updatedBotUpdate.state = ConversationState.ASKING_PAYER;
+      await updatedBotUpdate.save();
+      await this.askForPayer(updatedBotUpdate, telegramUserId);
+      return;
+    }
   }
 
   private async handleBucketSelection(
@@ -495,10 +609,18 @@ export class BotService {
       botUpdate.userId!.toString(),
     );
 
+    const typedParticipants = participants as unknown as PopulatedParticipant[];
+
+    const MAX_SHOWN = 3;
+    const showAllButton = typedParticipants.length > MAX_SHOWN;
+
     const buttons = [{ text: '👤 Yo pagué', callback_data: 'payer:me' }];
 
-    const typedParticipants = participants as unknown as PopulatedParticipant[];
-    typedParticipants.forEach((p) => {
+    const participantsToShow = showAllButton
+      ? typedParticipants.slice(0, MAX_SHOWN)
+      : typedParticipants;
+
+    participantsToShow.forEach((p) => {
       const name =
         p.guestName ||
         (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
@@ -509,6 +631,13 @@ export class BotService {
         callback_data: `payer:participant:${p._id.toString()}`,
       });
     });
+
+    if (showAllButton) {
+      buttons.push({
+        text: '➕ Ver más participantes',
+        callback_data: 'payer:show_more',
+      });
+    }
 
     await this.sendMessageWithButtons(
       telegramUserId,
@@ -577,7 +706,24 @@ export class BotService {
     }
 
     try {
-      if (data.startsWith('bucket:')) {
+      if (data.startsWith('trip:')) {
+        const tripId = data.replace('trip:', '');
+        const updatedBotUpdate = await this.botUpdateModel
+          .findById(botUpdate._id)
+          .exec();
+        if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+          await this.answerCallbackQuery(
+            callbackQueryId,
+            '⚠️ Error: No se encontró el gasto.',
+          );
+          return;
+        }
+
+        updatedBotUpdate.currentTripId = new Types.ObjectId(tripId);
+        await updatedBotUpdate.save();
+        await this.continueWithTrip(updatedBotUpdate, telegramUserId, tripId);
+        await this.answerCallbackQuery(callbackQueryId);
+      } else if (data.startsWith('bucket:')) {
         const bucketId = data.replace('bucket:', '');
         this.logger.log(`Callback bucket recibido - bucketId raw: ${bucketId}`);
 
@@ -695,6 +841,35 @@ export class BotService {
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
+      await this.answerCallbackQuery(callbackQueryId);
+    } else if (data === 'payer:show_more') {
+      const tripId = updatedBotUpdate.currentTripId!.toString();
+      const participants = await this.participantsService.findByTrip(
+        tripId,
+        updatedBotUpdate.userId!.toString(),
+      );
+
+      const typedParticipants =
+        participants as unknown as PopulatedParticipant[];
+      const remainingParticipants = typedParticipants.slice(3);
+
+      const buttons = remainingParticipants.map((p) => {
+        const name =
+          p.guestName ||
+          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
+            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
+            : 'Participante');
+        return {
+          text: `👤 ${name}`,
+          callback_data: `payer:participant:${p._id.toString()}`,
+        };
+      });
+
+      await this.sendMessageWithButtons(
+        telegramUserId,
+        '👥 Selecciona quién pagó:',
+        buttons,
+      );
       await this.answerCallbackQuery(callbackQueryId);
     }
   }
@@ -903,14 +1078,13 @@ export class BotService {
     if (!this.botToken) return;
 
     try {
-      const keyboard = {
-        inline_keyboard: [
-          buttons.map((btn) => ({
-            text: btn.text,
-            callback_data: btn.callback_data,
-          })),
-        ],
-      };
+      const MAX_COLUMNS = 2;
+      const keyboard: Array<Array<{ text: string; callback_data: string }>> =
+        [];
+
+      for (let i = 0; i < buttons.length; i += MAX_COLUMNS) {
+        keyboard.push(buttons.slice(i, i + MAX_COLUMNS));
+      }
 
       const response = await fetch(`${this.telegramApiUrl}/sendMessage`, {
         method: 'POST',
@@ -919,7 +1093,9 @@ export class BotService {
           chat_id: chatId,
           text,
           parse_mode: 'Markdown',
-          reply_markup: keyboard,
+          reply_markup: {
+            inline_keyboard: keyboard,
+          },
         }),
       });
 
