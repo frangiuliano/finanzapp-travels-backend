@@ -90,6 +90,30 @@ export class BotService {
       return;
     }
 
+    if (text.startsWith('/reset') || text.startsWith('/cancel')) {
+      this.logger.log('Es comando /reset o /cancel');
+      const botUpdate =
+        await this.botUpdateRepository.getOrCreateBotUpdate(telegramUserId);
+
+      if (!botUpdate.userId) {
+        await this.telegramClient.sendMessage(
+          telegramUserId,
+          '⚠️ Primero debes vincular tu cuenta. Ve a la web y genera un token de vinculación, luego usa /start <token>',
+        );
+        return;
+      }
+
+      botUpdate.state = ConversationState.IDLE;
+      botUpdate.pendingExpense = undefined;
+      await botUpdate.save();
+
+      await this.telegramClient.sendMessage(
+        telegramUserId,
+        '🔄 Estado del bot reseteado. Puedes empezar de nuevo.',
+      );
+      return;
+    }
+
     this.logger.log('Obteniendo botUpdate...');
     const botUpdate =
       await this.botUpdateRepository.getOrCreateBotUpdate(telegramUserId);
@@ -2185,39 +2209,7 @@ export class BotService {
       updatedBotUpdate.pendingExpense = undefined;
       await updatedBotUpdate.save();
 
-      const user = await this.userModel
-        .findById(updatedBotUpdate.userId)
-        .exec();
-      const userName = user
-        ? `${user.firstName} ${user.lastName}`.trim()
-        : 'Usuario';
-
-      const trip = await this.tripsService.findOne(
-        updatedBotUpdate.currentTripId.toString(),
-        updatedBotUpdate.userId!.toString(),
-      );
-      const tripName =
-        (trip as unknown as { name?: string })?.name || 'Viaje sin nombre';
-
-      const expenseInfo = `${expense.amount} ${expense.currency || 'USD'} - ${expense.description || 'Sin descripción'}${expense.merchantName ? ` en ${expense.merchantName}` : ''} para ${tripName}`;
-
-      const context = {
-        userName,
-        trips: [
-          { id: updatedBotUpdate.currentTripId.toString(), name: tripName },
-        ],
-        participants: [],
-        budgets: [],
-      };
-
-      const conversationalResponse =
-        await this.conversationalService.generateResponse(
-          `El usuario confirmó el gasto: ${expenseInfo}. Responde confirmando que se guardó exitosamente.`,
-          context,
-        );
-
       const confirmationMessage =
-        conversationalResponse?.message ||
         '✅ ¡Gasto guardado exitosamente!\n\nPuedes verlo en tu dashboard web.';
 
       await this.telegramClient.sendMessage(
