@@ -75,15 +75,16 @@ export class ConversationalService {
         messages: [
           {
             role: 'system',
-            content: `Eres un asistente amigable y conversacional que ayuda a los usuarios a registrar gastos de viaje de forma natural.
+            content: `Eres un asistente que ayuda a registrar gastos de viaje.
 
-INSTRUCCIONES:
-- Habla de forma natural, como si fueras un amigo ayudando
-- Sé breve pero amigable
+INSTRUCCIONES CRÍTICAS:
+- Sé MUY CONCISO y directo al punto
+- Haz preguntas cortas, sin explicaciones innecesarias
+- Máximo 1-2 frases por mensaje
 - Haz preguntas SOLO sobre la información específica que se te indique que falta
 - NO preguntes por información que ya está disponible o que no se te pidió
-- Confirma la información antes de guardar
-- Usa emojis de forma moderada (1-2 por mensaje)
+- NO agregues contexto innecesario ni rodeos
+- Usa emojis moderadamente (1 por mensaje máximo)
 - Responde en español argentino informal pero respetuoso
 - Sigue estrictamente las instrucciones específicas del prompt sobre qué preguntar`,
           },
@@ -92,8 +93,8 @@ INSTRUCCIONES:
             content: prompt,
           },
         ],
-        temperature: 0.7,
-        max_tokens: 300,
+        temperature: 0.5,
+        max_tokens: 150,
       });
 
       const content = response.choices[0]?.message?.content;
@@ -215,6 +216,8 @@ INFORMACIÓN FALTANTE:
 ${context.missingInfo.tripId ? '- Falta seleccionar el viaje' : ''}
 ${context.missingInfo.budgetId ? '- Falta seleccionar el bucket' : ''}
 ${context.missingInfo.paidBy ? '- Falta saber quién pagó' : ''}
+${context.missingInfo.merchantName ? '- Falta saber el nombre del comercio' : ''}
+${context.missingInfo.paymentMethod ? '- Falta saber el método de pago (efectivo o tarjeta)' : ''}
 ${context.missingInfo.isDivisible ? '- Falta saber si es compartido o personal' : ''}
 `
       : '';
@@ -233,6 +236,9 @@ ${context.missingInfo.isDivisible ? '- Falta saber si es compartido o personal' 
       } else if (context.missingInfo.merchantName) {
         specificQuestion =
           'IMPORTANTE: Debes preguntar SOLO por el nombre del comercio donde se hizo el gasto.';
+      } else if (context.missingInfo.paymentMethod) {
+        specificQuestion =
+          'IMPORTANTE: Debes preguntar SOLO por el método de pago (efectivo o tarjeta).';
       } else if (context.missingInfo.isDivisible) {
         specificQuestion =
           'IMPORTANTE: Debes preguntar SOLO si el gasto es compartido entre todos o personal.';
@@ -254,12 +260,13 @@ ${participantsList}
 BUCKETS DISPONIBLES:
 ${budgetsList}
 
-Tu tarea: Genera una respuesta natural y conversacional que:
-1. ${specificQuestion || 'Si falta información, pregunta de forma amigable'}
-2. Si tienes toda la información, confirma el gasto antes de guardarlo
-3. Si el usuario está confirmando o dando información, responde apropiadamente
-4. Sé breve pero amigable
-5. NO preguntes por información que ya está presente o que no está en missingInfo
+Tu tarea: Genera una respuesta MUY CONCISA (máximo 1-2 frases):
+1. ${specificQuestion || 'Si falta información, pregunta directamente sin rodeos'}
+2. Si tienes toda la información, confirma brevemente antes de guardar
+3. NO agregues contexto, explicaciones o información innecesaria
+4. Ve directo al punto con la pregunta específica
+
+IMPORTANTE: Sé extremadamente conciso. Solo pregunta lo necesario, sin introducciones largas ni contexto extra.
 
 Responde solo con el mensaje para el usuario, sin JSON ni formato adicional.`;
   }

@@ -1081,30 +1081,7 @@ export class BotService {
       return;
     }
 
-    const user = await this.userModel.findById(botUpdate.userId).exec();
-    const userName = user
-      ? `${user.firstName} ${user.lastName}`.trim()
-      : 'Usuario';
-
-    const context = {
-      userName,
-      trips: [],
-      participants: [],
-      budgets: [],
-      pendingExpense: botUpdate.pendingExpense,
-      cards: cards.map((c) => ({
-        id: getCardId(c),
-        name: c.name,
-        lastFourDigits: c.lastFourDigits,
-      })),
-    };
-
-    const conversationalResponse =
-      await this.conversationalService.generateResponse('', context);
-
-    const message =
-      conversationalResponse?.message ||
-      '💳 ¿Con qué tarjeta pagaste este gasto?';
+    const message = '💳 ¿Con qué tarjeta pagaste este gasto?';
 
     const buttons = cards.slice(0, 10).map((card) => ({
       text: `${card.name} (****${card.lastFourDigits})`,
@@ -1450,11 +1427,6 @@ export class BotService {
     const expense = botUpdate.pendingExpense;
     if (!expense) return;
 
-    const user = await this.userModel.findById(botUpdate.userId).exec();
-    const userName = user
-      ? `${user.firstName} ${user.lastName}`.trim()
-      : 'Usuario';
-
     let payerName = 'No especificado';
     if (expense.paidByParticipantId) {
       const participant = (await this.participantsService.findOne(
@@ -1483,70 +1455,18 @@ export class BotService {
       budgetName = budget?.name || 'Sin presupuesto';
     }
 
-    const tripId = botUpdate.currentTripId!.toString();
-    const trip = await this.tripsService.findOne(
-      tripId,
-      botUpdate.userId!.toString(),
-    );
-    const tripName =
-      (trip as unknown as { name?: string })?.name || 'Viaje sin nombre';
-
-    const participants = await this.participantsService.findByTrip(
-      tripId,
-      botUpdate.userId!.toString(),
-    );
-    const typedParticipants = participants as unknown as PopulatedParticipant[];
-
-    const budgetsResult: unknown = await this.budgetsService.findAll(
-      tripId,
-      botUpdate.userId!.toString(),
-    );
-    const budgets = budgetsResult as PopulatedBudget[];
-
-    const context = {
-      userName,
-      trips: [{ id: tripId, name: tripName }],
-      participants: typedParticipants.map((p) => ({
-        id: p._id.toString(),
-        name:
-          p.guestName ||
-          (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
-            ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
-            : 'Participante'),
-        isUser: !!(
-          p.userId &&
-          typeof p.userId === 'object' &&
-          'firstName' in p.userId &&
-          p.userId._id.toString() === botUpdate.userId!.toString()
-        ),
-      })),
-      budgets: budgets.map((b) => ({
-        id: b._id.toString(),
-        name: b.name,
-      })),
-      pendingExpense: expense,
-    };
-
-    const expenseSummary = `Monto: ${expense.amount} ${expense.currency || 'USD'}, Descripción: ${expense.description || 'Sin descripción'}${expense.merchantName ? `, Comercio: ${expense.merchantName}` : ''}, Bucket: ${budgetName}, Pagó: ${payerName}, Tipo: ${expense.isDivisible ? 'Compartido' : 'Personal'}, Viaje: ${tripName}`;
-
-    const conversationalResponse =
-      await this.conversationalService.generateResponse(
-        `Confirma este gasto: ${expenseSummary}`,
-        context,
-      );
-
+    const merchantLine = expense.merchantName
+      ? `🏪 *Comercio:* ${expense.merchantName}\n`
+      : '';
     const message =
-      conversationalResponse?.message ||
-      `📋 *Resumen del gasto:*\n\n` +
-        `💰 *Monto:* ${expense.amount} ${expense.currency || 'USD'}\n` +
-        `📝 *Descripción:* ${expense.description || 'Sin descripción'}\n` +
-        (expense.merchantName
-          ? `🏪 *Comercio:* ${expense.merchantName}\n`
-          : '') +
-        `📂 *Bucket:* ${budgetName}\n` +
-        `💳 *Pagó:* ${payerName}\n` +
-        `📊 *Tipo:* ${expense.isDivisible ? 'Compartido' : 'Personal'}\n` +
-        `✅ *Estado:* Pagado`;
+      '📋 *Resumen del gasto:*\n\n' +
+      `💰 *Monto:* ${expense.amount} ${expense.currency || 'USD'}\n` +
+      `📝 *Descripción:* ${expense.description || 'Sin descripción'}\n` +
+      merchantLine +
+      `📂 *Bucket:* ${budgetName}\n` +
+      `💳 *Pagó:* ${payerName}\n` +
+      `📊 *Tipo:* ${expense.isDivisible ? 'Compartido' : 'Personal'}\n` +
+      `✅ *Estado:* Pagado`;
 
     const buttons = [
       { text: '✅ Confirmar', callback_data: 'confirm:yes' },
