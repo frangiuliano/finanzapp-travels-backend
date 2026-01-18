@@ -7,6 +7,7 @@ import {
   UseGuards,
   Get,
   Param,
+  Patch,
   Res,
   Req,
   UnauthorizedException,
@@ -17,6 +18,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Public } from './decorators/public.decorator';
 import { GetUser } from './decorators/get-user.decorator';
@@ -176,5 +178,19 @@ export class AuthController {
       emailVerified: user.emailVerified,
       lastLogin: user.lastLogin,
     };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('profile')
+  @HttpCode(HttpStatus.OK)
+  async updateProfile(
+    @GetUser() user: UserDocument,
+    @Body() updateProfileDto: UpdateProfileDto,
+  ) {
+    const updatedUser = await this.authService.updateProfile(
+      user._id.toString(),
+      updateProfileDto,
+    );
+    return updatedUser;
   }
 }

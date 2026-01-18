@@ -12,6 +12,7 @@ import * as crypto from 'crypto';
 import { User, UserDocument } from '../users/user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
   JwtPayload,
   JwtSignPayload,
@@ -284,6 +285,37 @@ export class AuthService {
       );
       await user.save({ validateBeforeSave: false });
     }
+  }
+
+  async updateProfile(
+    userId: string,
+    updateProfileDto: UpdateProfileDto,
+  ): Promise<{
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    emailVerified: boolean;
+    lastLogin?: Date;
+  }> {
+    const user = await this.userModel.findById(userId).exec();
+
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+
+    user.firstName = updateProfileDto.firstName;
+    user.lastName = updateProfileDto.lastName;
+    await user.save();
+
+    return {
+      id: user._id.toString(),
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      emailVerified: user.emailVerified,
+      lastLogin: user.lastLogin,
+    };
   }
 
   private sanitizeUser(user: UserDocument) {
