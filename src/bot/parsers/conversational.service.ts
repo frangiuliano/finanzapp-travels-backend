@@ -205,7 +205,7 @@ GASTO ACTUAL:
 - Descripción: ${context.pendingExpense.description || 'Sin descripción'}
 ${context.pendingExpense.merchantName ? `- Comercio: ${context.pendingExpense.merchantName}` : ''}
 ${context.pendingExpense.paidByParticipantId ? '- Ya tiene pagador' : '- Falta definir quién pagó'}
-${context.pendingExpense.budgetId ? '- Ya tiene bucket' : '- Falta definir bucket'}
+${context.pendingExpense.budgetId ? '- Ya tiene presupuesto' : '- Falta definir presupuesto'}
 ${context.pendingExpense.isDivisible !== undefined ? `- Tipo: ${context.pendingExpense.isDivisible ? 'Compartido' : 'Personal'}` : '- Falta definir si es compartido'}
 `
       : '';
@@ -214,7 +214,7 @@ ${context.pendingExpense.isDivisible !== undefined ? `- Tipo: ${context.pendingE
       ? `
 INFORMACIÓN FALTANTE:
 ${context.missingInfo.tripId ? '- Falta seleccionar el viaje' : ''}
-${context.missingInfo.budgetId ? '- Falta seleccionar el bucket' : ''}
+${context.missingInfo.budgetId ? '- Falta seleccionar el presupuesto' : ''}
 ${context.missingInfo.paidBy ? '- Falta saber quién pagó' : ''}
 ${context.missingInfo.merchantName ? '- Falta saber el nombre del comercio' : ''}
 ${context.missingInfo.paymentMethod ? '- Falta saber el método de pago (efectivo o tarjeta)' : ''}
@@ -229,7 +229,7 @@ ${context.missingInfo.isDivisible ? '- Falta saber si es compartido o personal' 
           'IMPORTANTE: Debes preguntar SOLO por el viaje. Menciona los viajes disponibles en tu respuesta.';
       } else if (context.missingInfo.budgetId) {
         specificQuestion =
-          'IMPORTANTE: Debes preguntar SOLO por el bucket/presupuesto. Menciona los buckets disponibles en tu respuesta.';
+          'IMPORTANTE: Debes preguntar SOLO por el presupuesto. Menciona los presupuestos disponibles en tu respuesta.';
       } else if (context.missingInfo.paidBy) {
         specificQuestion =
           'IMPORTANTE: Debes preguntar SOLO quién pagó este gasto. Menciona los participantes disponibles si es relevante.';
@@ -257,7 +257,7 @@ ${tripsList}
 PARTICIPANTES:
 ${participantsList}
 
-BUCKETS DISPONIBLES:
+PRESUPUESTOS DISPONIBLES:
 ${budgetsList}
 
 Tu tarea: Genera una respuesta MUY CONCISA (máximo 1-2 frases):
@@ -290,10 +290,10 @@ Estoy esperando información sobre: ${expectedInfo}
 
 VIAJES: ${tripsList}
 PARTICIPANTES: ${participantsList}
-BUCKETS: ${budgetsList}
+PRESUPUESTOS: ${budgetsList}
 
 Extrae la información relevante en JSON. Si el usuario confirma algo (sí, claro, correcto, etc.), usa "confirmed": true.
-Si menciona un viaje, participante o bucket, haz match por nombre con las opciones disponibles.
+Si menciona un viaje, participante o presupuesto, haz match por nombre con las opciones disponibles.
 
 Formato esperado:
 {

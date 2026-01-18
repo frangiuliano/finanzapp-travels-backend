@@ -427,7 +427,7 @@ export class BotService {
 
     const message =
       conversationalResponse?.message ||
-      '📂 ¿A qué bucket corresponde este gasto?';
+      '📂 ¿A qué presupuesto corresponde este gasto?';
 
     const buttons = budgets.slice(0, 10).map((budget) => ({
       text: budget.name,
@@ -683,7 +683,7 @@ export class BotService {
         await this.conversationalService.generateResponse(text, context);
       const errorMessage =
         conversationalResponse?.message ||
-        '⚠️ No encontré ese bucket. Por favor, selecciona uno de los botones o escribe el nombre exacto.';
+        '⚠️ No encontré ese presupuesto. Por favor, selecciona uno de los botones o escribe el nombre exacto.';
       await this.telegramClient.sendMessage(telegramUserId, errorMessage);
     }
   }
@@ -2115,7 +2115,7 @@ export class BotService {
       `💰 *Monto:* ${expense.amount} ${expense.currency || 'USD'}\n` +
       `📝 *Descripción:* ${expense.description || 'Sin descripción'}\n` +
       merchantLine +
-      `📂 *Bucket:* ${budgetName}\n` +
+      `📂 *Presupuesto:* ${budgetName}\n` +
       `💳 *Pagó:* ${payerName}\n` +
       `📊 *Tipo:* ${expense.isDivisible ? 'Compartido' : 'Personal'}` +
       splitLine +

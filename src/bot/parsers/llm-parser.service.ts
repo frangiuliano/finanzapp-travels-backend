@@ -116,7 +116,7 @@ CONTEXTO:
 - Usuario actual: ${context.userName}
 - Participantes disponibles:
 ${participantsList}
-- Buckets (presupuestos) disponibles:
+- Presupuestos disponibles:
 ${budgetsList}
 
 INSTRUCCIONES:
@@ -128,7 +128,7 @@ INSTRUCCIONES:
    - "participant": si un participante pagó (usa el participantId correspondiente)
    - "third": si alguien externo pagó (usa paidByName)
 5. Determina si es DIVISIBLE (compartido): true si menciona "compartido", "entre todos", "dividido", etc.
-6. Si menciona un bucket/presupuesto, intenta hacer match con los disponibles (usa budgetName)
+6. Si menciona un presupuesto, intenta hacer match con los disponibles (usa budgetName)
 7. Calcula CONFIDENCE (0-1): qué tan seguro estás de la extracción
 
 Responde en este formato JSON:
