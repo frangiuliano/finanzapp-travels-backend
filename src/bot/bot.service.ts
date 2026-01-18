@@ -177,6 +177,28 @@ export class BotService {
         );
         await this.handleSplitSelection(botUpdate, text, telegramUserId);
         break;
+      case ConversationState.ASKING_SPLIT_OPTION:
+        this.logger.log(
+          'Estado ASKING_SPLIT_OPTION, llamando handleSplitOptionSelection...',
+        );
+        await this.handleSplitOptionSelection(botUpdate, text, telegramUserId);
+        break;
+      case ConversationState.ASKING_SPLIT_PARTICIPANTS:
+        this.logger.log(
+          'Estado ASKING_SPLIT_PARTICIPANTS, llamando handleSplitParticipantsSelection...',
+        );
+        await this.handleSplitParticipantsSelection(
+          botUpdate,
+          text,
+          telegramUserId,
+        );
+        break;
+      case ConversationState.ASKING_STATUS:
+        this.logger.log(
+          'Estado ASKING_STATUS, llamando handleStatusSelection...',
+        );
+        await this.handleStatusSelection(botUpdate, text, telegramUserId);
+        break;
       case ConversationState.CONFIRMING:
         this.logger.log('Estado CONFIRMING, enviando mensaje...');
         await this.telegramClient.sendMessage(
@@ -229,6 +251,9 @@ export class BotService {
     const parsed = await this.messageParser.parse(text, parseContext);
 
     this.logger.log(`Parsed expense: ${JSON.stringify(parsed)}`);
+    this.logger.log(
+      `parsed.isDivisible value: ${parsed.isDivisible} (type: ${typeof parsed.isDivisible})`,
+    );
 
     if (!parsed.amount) {
       await this.telegramClient.sendMessage(
@@ -263,12 +288,31 @@ export class BotService {
       }
     }
 
+    const hasSharedKeywords =
+      /(?:compartido|entre todos|dividido|todos|grupo)/i.test(text);
+    const hasPersonalKeywords = /(?:solo|mío|personal|propio|individual)/i.test(
+      text,
+    );
+
+    let isDivisibleValue: boolean | undefined;
+    if (hasSharedKeywords) {
+      isDivisibleValue = true;
+    } else if (hasPersonalKeywords) {
+      isDivisibleValue = false;
+    } else {
+      isDivisibleValue = undefined;
+    }
+
+    this.logger.log(
+      `Setting isDivisible to: ${isDivisibleValue} (hasSharedKeywords: ${hasSharedKeywords}, hasPersonalKeywords: ${hasPersonalKeywords})`,
+    );
+
     botUpdate.pendingExpense = {
       amount: parsed.amount,
       currency: parsed.currency || 'USD',
       description: parsed.description || text,
       merchantName,
-      isDivisible: parsed.isDivisible || false,
+      isDivisible: isDivisibleValue,
     };
 
     if (trips.length === 1) {
@@ -621,6 +665,16 @@ export class BotService {
         return;
       }
 
+      if (
+        updatedBotUpdate.pendingExpense.isDivisible === undefined ||
+        updatedBotUpdate.pendingExpense.isDivisible === null
+      ) {
+        updatedBotUpdate.state = ConversationState.ASKING_SPLIT;
+        await updatedBotUpdate.save();
+        await this.askForSplit(updatedBotUpdate, telegramUserId);
+        return;
+      }
+
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
@@ -832,6 +886,16 @@ export class BotService {
         return;
       }
 
+      if (
+        updatedBotUpdate.pendingExpense.isDivisible === undefined ||
+        updatedBotUpdate.pendingExpense.isDivisible === null
+      ) {
+        updatedBotUpdate.state = ConversationState.ASKING_SPLIT;
+        await updatedBotUpdate.save();
+        await this.askForSplit(updatedBotUpdate, telegramUserId);
+        return;
+      }
+
       updatedBotUpdate.state = ConversationState.CONFIRMING;
       await updatedBotUpdate.save();
       await this.showConfirmation(updatedBotUpdate, telegramUserId);
@@ -939,6 +1003,16 @@ export class BotService {
     updatedBotUpdate.pendingExpense.merchantName = merchantName;
     updatedBotUpdate.markModified('pendingExpense');
 
+    if (
+      updatedBotUpdate.pendingExpense.isDivisible === undefined ||
+      updatedBotUpdate.pendingExpense.isDivisible === null
+    ) {
+      updatedBotUpdate.state = ConversationState.ASKING_SPLIT;
+      await updatedBotUpdate.save();
+      await this.askForSplit(updatedBotUpdate, telegramUserId);
+      return;
+    }
+
     if (!updatedBotUpdate.pendingExpense.paymentMethod) {
       updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
       await updatedBotUpdate.save();
@@ -1032,9 +1106,9 @@ export class BotService {
         return;
       }
 
-      updatedBotUpdate.state = ConversationState.CONFIRMING;
+      updatedBotUpdate.state = ConversationState.ASKING_STATUS;
       await updatedBotUpdate.save();
-      await this.showConfirmation(updatedBotUpdate, telegramUserId);
+      await this.askForStatus(updatedBotUpdate, telegramUserId);
     } else {
       await this.telegramClient.sendMessage(
         telegramUserId,
@@ -1126,9 +1200,9 @@ export class BotService {
     if (matchedCard) {
       updatedBotUpdate.pendingExpense.cardId = getCardId(matchedCard);
       updatedBotUpdate.markModified('pendingExpense');
-      updatedBotUpdate.state = ConversationState.CONFIRMING;
+      updatedBotUpdate.state = ConversationState.ASKING_STATUS;
       await updatedBotUpdate.save();
-      await this.showConfirmation(updatedBotUpdate, telegramUserId);
+      await this.askForStatus(updatedBotUpdate, telegramUserId);
     } else {
       await this.telegramClient.sendMessage(
         telegramUserId,
@@ -1137,13 +1211,366 @@ export class BotService {
     }
   }
 
+  private async askForSplit(
+    botUpdate: BotUpdateDocument,
+    telegramUserId: number,
+  ): Promise<void> {
+    this.logger.log('=== askForSplit llamado ===');
+    this.logger.log(
+      `pendingExpense.isDivisible: ${botUpdate.pendingExpense?.isDivisible}`,
+    );
+    this.logger.log(
+      `pendingExpense completo: ${JSON.stringify(botUpdate.pendingExpense)}`,
+    );
+
+    const message = '📊 ¿Es un gasto personal o compartido?';
+
+    const buttons = [
+      { text: '👤 Personal', callback_data: 'split:personal' },
+      { text: '👥 Compartido', callback_data: 'split:shared' },
+    ];
+
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
+  }
+
   private async handleSplitSelection(
     botUpdate: BotUpdateDocument,
     text: string,
     telegramUserId: number,
   ): Promise<void> {
-    botUpdate.state = ConversationState.CONFIRMING;
-    await this.showConfirmation(botUpdate, telegramUserId);
+    const updatedBotUpdate = await this.botUpdateModel
+      .findById(botUpdate._id)
+      .exec();
+    if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+      return;
+    }
+
+    const isPersonal =
+      text.toLowerCase().includes('personal') ||
+      text.toLowerCase().includes('solo') ||
+      text.toLowerCase().includes('mío') ||
+      text.toLowerCase().includes('mio');
+
+    const isShared =
+      text.toLowerCase().includes('compartido') ||
+      text.toLowerCase().includes('todos') ||
+      text.toLowerCase().includes('grupo');
+
+    if (isPersonal) {
+      updatedBotUpdate.pendingExpense.isDivisible = false;
+      updatedBotUpdate.pendingExpense.splitType = undefined;
+      updatedBotUpdate.pendingExpense.splits = undefined;
+      updatedBotUpdate.markModified('pendingExpense');
+      updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
+      await updatedBotUpdate.save();
+      await this.askForPaymentMethod(updatedBotUpdate, telegramUserId);
+      return;
+    }
+
+    if (isShared) {
+      updatedBotUpdate.pendingExpense.isDivisible = true;
+      updatedBotUpdate.markModified('pendingExpense');
+      updatedBotUpdate.state = ConversationState.ASKING_SPLIT_OPTION;
+      await updatedBotUpdate.save();
+      await this.askForSplitOption(updatedBotUpdate, telegramUserId);
+      return;
+    }
+
+    await this.telegramClient.sendMessage(
+      telegramUserId,
+      '⚠️ Por favor, selecciona si es personal o compartido.',
+    );
+  }
+
+  private async askForSplitOption(
+    botUpdate: BotUpdateDocument,
+    telegramUserId: number,
+  ): Promise<void> {
+    const message =
+      '📊 ¿Este gasto compartido es para todos, algunos o una persona?';
+
+    const buttons = [
+      { text: '👥 Todos', callback_data: 'split-option:all' },
+      { text: '👤 Algunos', callback_data: 'split-option:some' },
+      { text: '👤 Una persona', callback_data: 'split-option:one' },
+    ];
+
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
+  }
+
+  private async handleSplitOptionSelection(
+    botUpdate: BotUpdateDocument,
+    text: string,
+    telegramUserId: number,
+  ): Promise<void> {
+    const updatedBotUpdate = await this.botUpdateModel
+      .findById(botUpdate._id)
+      .exec();
+    if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+      return;
+    }
+
+    const isAll =
+      text.toLowerCase().includes('todos') ||
+      text.toLowerCase().includes('all');
+
+    const isSome =
+      text.toLowerCase().includes('algunos') ||
+      text.toLowerCase().includes('some');
+
+    const isOne =
+      text.toLowerCase().includes('una persona') ||
+      text.toLowerCase().includes('una') ||
+      text.toLowerCase().includes('one');
+
+    if (isAll) {
+      const tripId = updatedBotUpdate.currentTripId!.toString();
+      const participants = await this.participantsService.findByTrip(
+        tripId,
+        updatedBotUpdate.userId!.toString(),
+      );
+      const typedParticipants =
+        participants as unknown as PopulatedParticipant[];
+
+      const amount = updatedBotUpdate.pendingExpense.amount || 0;
+      const amountPerParticipant = amount / typedParticipants.length;
+
+      updatedBotUpdate.pendingExpense.splitType = SplitType.EQUAL;
+      updatedBotUpdate.pendingExpense.splits = typedParticipants.map((p) => ({
+        participantId: p._id.toString(),
+        amount: Number(amountPerParticipant.toFixed(2)),
+      }));
+
+      const totalCalculated = updatedBotUpdate.pendingExpense.splits.reduce(
+        (sum, split) => sum + (split.amount || 0),
+        0,
+      );
+      const difference = amount - totalCalculated;
+      if (Math.abs(difference) > 0.01) {
+        const lastSplit =
+          updatedBotUpdate.pendingExpense.splits[
+            updatedBotUpdate.pendingExpense.splits.length - 1
+          ];
+        if (lastSplit && lastSplit.amount !== undefined) {
+          lastSplit.amount = Number((lastSplit.amount + difference).toFixed(2));
+        }
+      }
+
+      updatedBotUpdate.markModified('pendingExpense');
+      updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
+      await updatedBotUpdate.save();
+      await this.askForPaymentMethod(updatedBotUpdate, telegramUserId);
+      return;
+    }
+
+    if (isSome || isOne) {
+      updatedBotUpdate.pendingExpense.selectedParticipants = [];
+      updatedBotUpdate.markModified('pendingExpense');
+      updatedBotUpdate.state = ConversationState.ASKING_SPLIT_PARTICIPANTS;
+      await updatedBotUpdate.save();
+      await this.askForSplitParticipants(
+        updatedBotUpdate,
+        telegramUserId,
+        isOne,
+      );
+      return;
+    }
+
+    await this.telegramClient.sendMessage(
+      telegramUserId,
+      '⚠️ Por favor, selecciona una opción.',
+    );
+  }
+
+  private async askForSplitParticipants(
+    botUpdate: BotUpdateDocument,
+    telegramUserId: number,
+    isOne: boolean,
+  ): Promise<void> {
+    const updatedBotUpdate = await this.botUpdateModel
+      .findById(botUpdate._id)
+      .exec();
+    if (!updatedBotUpdate) return;
+
+    const selectedParticipants: string[] =
+      updatedBotUpdate.pendingExpense?.selectedParticipants || [];
+
+    const tripId = updatedBotUpdate.currentTripId!.toString();
+    const participants = await this.participantsService.findByTrip(
+      tripId,
+      updatedBotUpdate.userId!.toString(),
+    );
+    const typedParticipants = participants as unknown as PopulatedParticipant[];
+
+    const message = isOne
+      ? '👤 ¿Para quién es este gasto?'
+      : `👥 Selecciona los participantes (${selectedParticipants.length} seleccionado${selectedParticipants.length !== 1 ? 's' : ''}):\n\nPresiona los nombres para seleccionar/deseleccionar. Luego presiona "✅ Listo" cuando termines.`;
+
+    const MAX_SHOWN = 10;
+    const buttons = typedParticipants.slice(0, MAX_SHOWN).map((p) => {
+      const name =
+        p.guestName ||
+        (p.userId && typeof p.userId === 'object' && 'firstName' in p.userId
+          ? `${p.userId.firstName} ${p.userId.lastName}`.trim()
+          : 'Participante');
+      const isSelected = selectedParticipants.includes(p._id.toString());
+      return {
+        text: isSelected ? `✅ ${name}` : `☐ ${name}`,
+        callback_data: `split-participant:${p._id.toString()}`,
+      };
+    });
+
+    if (!isOne && buttons.length > 0) {
+      buttons.push({
+        text: `✅ Listo${selectedParticipants.length > 0 ? ` (${selectedParticipants.length})` : ''}`,
+        callback_data: 'split-participants:done',
+      });
+    }
+
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
+  }
+
+  private async handleSplitParticipantsSelection(
+    botUpdate: BotUpdateDocument,
+    text: string,
+    telegramUserId: number,
+  ): Promise<void> {
+    const updatedBotUpdate = await this.botUpdateModel
+      .findById(botUpdate._id)
+      .exec();
+    if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+      return;
+    }
+
+    const selectedParticipants: string[] =
+      updatedBotUpdate.pendingExpense.selectedParticipants || [];
+
+    if (
+      text.toLowerCase().includes('listo') ||
+      text.toLowerCase().includes('done')
+    ) {
+      if (selectedParticipants.length === 0) {
+        await this.telegramClient.sendMessage(
+          telegramUserId,
+          '⚠️ Debes seleccionar al menos un participante.',
+        );
+        return;
+      }
+
+      const amount = updatedBotUpdate.pendingExpense.amount || 0;
+      const amountPerParticipant = amount / selectedParticipants.length;
+
+      updatedBotUpdate.pendingExpense.splitType = SplitType.EQUAL;
+      updatedBotUpdate.pendingExpense.splits = selectedParticipants.map(
+        (id) => ({
+          participantId: id,
+          amount: Number(amountPerParticipant.toFixed(2)),
+        }),
+      );
+
+      const totalCalculated = updatedBotUpdate.pendingExpense.splits.reduce(
+        (sum, split) => sum + (split.amount || 0),
+        0,
+      );
+      const difference = amount - totalCalculated;
+      if (Math.abs(difference) > 0.01) {
+        const lastSplit =
+          updatedBotUpdate.pendingExpense.splits[
+            updatedBotUpdate.pendingExpense.splits.length - 1
+          ];
+        if (lastSplit && lastSplit.amount !== undefined) {
+          lastSplit.amount = Number((lastSplit.amount + difference).toFixed(2));
+        }
+      }
+
+      updatedBotUpdate.pendingExpense.selectedParticipants = undefined;
+      updatedBotUpdate.markModified('pendingExpense');
+      updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
+      await updatedBotUpdate.save();
+      await this.askForPaymentMethod(updatedBotUpdate, telegramUserId);
+      return;
+    }
+
+    await this.telegramClient.sendMessage(
+      telegramUserId,
+      '⚠️ Por favor, selecciona los participantes usando los botones.',
+    );
+  }
+
+  private async askForStatus(
+    botUpdate: BotUpdateDocument,
+    telegramUserId: number,
+  ): Promise<void> {
+    const message = '💵 ¿El gasto está pagado o pendiente?';
+
+    const buttons = [
+      { text: '✅ Pagado', callback_data: 'status:paid' },
+      { text: '⏳ Pendiente', callback_data: 'status:pending' },
+    ];
+
+    await this.telegramClient.sendMessageWithButtons(
+      telegramUserId,
+      message,
+      buttons,
+    );
+  }
+
+  private async handleStatusSelection(
+    botUpdate: BotUpdateDocument,
+    text: string,
+    telegramUserId: number,
+  ): Promise<void> {
+    const updatedBotUpdate = await this.botUpdateModel
+      .findById(botUpdate._id)
+      .exec();
+    if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+      return;
+    }
+
+    const isPaid =
+      text.toLowerCase().includes('pagado') ||
+      text.toLowerCase().includes('paid') ||
+      text.toLowerCase().includes('pago');
+
+    const isPending =
+      text.toLowerCase().includes('pendiente') ||
+      text.toLowerCase().includes('pending') ||
+      text.toLowerCase().includes('faltante');
+
+    if (isPaid) {
+      updatedBotUpdate.pendingExpense.status = ExpenseStatus.PAID;
+      updatedBotUpdate.markModified('pendingExpense');
+      updatedBotUpdate.state = ConversationState.CONFIRMING;
+      await updatedBotUpdate.save();
+      await this.showConfirmation(updatedBotUpdate, telegramUserId);
+      return;
+    }
+
+    if (isPending) {
+      updatedBotUpdate.pendingExpense.status = ExpenseStatus.PENDING;
+      updatedBotUpdate.markModified('pendingExpense');
+      updatedBotUpdate.state = ConversationState.CONFIRMING;
+      await updatedBotUpdate.save();
+      await this.showConfirmation(updatedBotUpdate, telegramUserId);
+      return;
+    }
+
+    await this.telegramClient.sendMessage(
+      telegramUserId,
+      '⚠️ Por favor, selecciona si está pagado o pendiente.',
+    );
   }
 
   private async handleCallbackQuery(
@@ -1227,6 +1654,17 @@ export class BotService {
           return;
         }
 
+        if (
+          updatedBotUpdate.pendingExpense.isDivisible === undefined ||
+          updatedBotUpdate.pendingExpense.isDivisible === null
+        ) {
+          updatedBotUpdate.state = ConversationState.ASKING_SPLIT;
+          await updatedBotUpdate.save();
+          await this.askForSplit(updatedBotUpdate, telegramUserId);
+          await this.telegramClient.answerCallbackQuery(callbackQueryId);
+          return;
+        }
+
         updatedBotUpdate.state = ConversationState.CONFIRMING;
         this.logger.log(
           `Guardando botUpdate con budgetId: ${updatedBotUpdate.pendingExpense.budgetId}`,
@@ -1272,9 +1710,9 @@ export class BotService {
           await updatedBotUpdate.save();
           await this.askForCard(updatedBotUpdate, telegramUserId);
         } else {
-          updatedBotUpdate.state = ConversationState.CONFIRMING;
+          updatedBotUpdate.state = ConversationState.ASKING_STATUS;
           await updatedBotUpdate.save();
-          await this.showConfirmation(updatedBotUpdate, telegramUserId);
+          await this.askForStatus(updatedBotUpdate, telegramUserId);
         }
         await this.telegramClient.answerCallbackQuery(callbackQueryId);
       } else if (data.startsWith('card:')) {
@@ -1292,9 +1730,169 @@ export class BotService {
 
         updatedBotUpdate.pendingExpense.cardId = cardId;
         updatedBotUpdate.markModified('pendingExpense');
-        updatedBotUpdate.state = ConversationState.CONFIRMING;
+        updatedBotUpdate.state = ConversationState.ASKING_STATUS;
         await updatedBotUpdate.save();
-        await this.showConfirmation(updatedBotUpdate, telegramUserId);
+        await this.askForStatus(updatedBotUpdate, telegramUserId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
+      } else if (data.startsWith('split:')) {
+        const splitType = data.replace('split:', '');
+        const updatedBotUpdate = await this.botUpdateModel
+          .findById(botUpdate._id)
+          .exec();
+        if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+          await this.telegramClient.answerCallbackQuery(
+            callbackQueryId,
+            '⚠️ Error: No se encontró el gasto.',
+          );
+          return;
+        }
+
+        const splitText =
+          splitType === 'personal'
+            ? 'personal'
+            : splitType === 'shared'
+              ? 'compartido'
+              : splitType;
+        await this.handleSplitSelection(
+          updatedBotUpdate,
+          splitText,
+          telegramUserId,
+        );
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
+      } else if (data.startsWith('split-option:')) {
+        const splitOption = data.replace('split-option:', '');
+        const updatedBotUpdate = await this.botUpdateModel
+          .findById(botUpdate._id)
+          .exec();
+        if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+          await this.telegramClient.answerCallbackQuery(
+            callbackQueryId,
+            '⚠️ Error: No se encontró el gasto.',
+          );
+          return;
+        }
+
+        const optionText =
+          splitOption === 'all'
+            ? 'todos'
+            : splitOption === 'some'
+              ? 'algunos'
+              : splitOption === 'one'
+                ? 'una persona'
+                : splitOption;
+        await this.handleSplitOptionSelection(
+          updatedBotUpdate,
+          optionText,
+          telegramUserId,
+        );
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
+      } else if (
+        data.startsWith('split-participant:') ||
+        data.startsWith('split-participants:')
+      ) {
+        const participantData = data
+          .replace('split-participant:', '')
+          .replace('split-participants:', '');
+        const updatedBotUpdate = await this.botUpdateModel
+          .findById(botUpdate._id)
+          .exec();
+        if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+          await this.telegramClient.answerCallbackQuery(
+            callbackQueryId,
+            '⚠️ Error: No se encontró el gasto.',
+          );
+          return;
+        }
+
+        if (participantData === 'done') {
+          await this.handleSplitParticipantsSelection(
+            updatedBotUpdate,
+            'listo',
+            telegramUserId,
+          );
+          await this.telegramClient.answerCallbackQuery(callbackQueryId);
+        } else {
+          const selectedParticipants: string[] =
+            updatedBotUpdate.pendingExpense.selectedParticipants || [];
+
+          const participantIndex =
+            selectedParticipants.indexOf(participantData);
+          const isSelected = participantIndex !== -1;
+
+          if (isSelected) {
+            selectedParticipants.splice(participantIndex, 1);
+          } else {
+            selectedParticipants.push(participantData);
+          }
+
+          updatedBotUpdate.pendingExpense.selectedParticipants =
+            selectedParticipants;
+          updatedBotUpdate.markModified('pendingExpense');
+          await updatedBotUpdate.save();
+
+          const tripId = updatedBotUpdate.currentTripId!.toString();
+          const participants = await this.participantsService.findByTrip(
+            tripId,
+            updatedBotUpdate.userId!.toString(),
+          );
+          const typedParticipants =
+            participants as unknown as PopulatedParticipant[];
+
+          const selectedParticipant = typedParticipants.find(
+            (p) => p._id.toString() === participantData,
+          );
+          const name =
+            selectedParticipant?.guestName ||
+            (selectedParticipant?.userId &&
+            typeof selectedParticipant.userId === 'object' &&
+            'firstName' in selectedParticipant.userId
+              ? `${selectedParticipant.userId.firstName} ${selectedParticipant.userId.lastName}`.trim()
+              : 'Participante');
+
+          const savedBotUpdate = await this.botUpdateModel
+            .findById(updatedBotUpdate._id)
+            .exec();
+
+          if (savedBotUpdate) {
+            await this.askForSplitParticipants(
+              savedBotUpdate,
+              telegramUserId,
+              false,
+            );
+            await this.telegramClient.answerCallbackQuery(
+              callbackQueryId,
+              isSelected
+                ? `✅ ${name} seleccionado`
+                : `☐ ${name} deseleccionado`,
+            );
+          } else {
+            await this.telegramClient.answerCallbackQuery(callbackQueryId);
+          }
+        }
+      } else if (data.startsWith('status:')) {
+        const statusType = data.replace('status:', '');
+        const updatedBotUpdate = await this.botUpdateModel
+          .findById(botUpdate._id)
+          .exec();
+        if (!updatedBotUpdate || !updatedBotUpdate.pendingExpense) {
+          await this.telegramClient.answerCallbackQuery(
+            callbackQueryId,
+            '⚠️ Error: No se encontró el gasto.',
+          );
+          return;
+        }
+
+        const statusText =
+          statusType === 'paid'
+            ? 'pagado'
+            : statusType === 'pending'
+              ? 'pendiente'
+              : statusType;
+        await this.handleStatusSelection(
+          updatedBotUpdate,
+          statusText,
+          telegramUserId,
+        );
         await this.telegramClient.answerCallbackQuery(callbackQueryId);
       } else if (data.startsWith('confirm:')) {
         if (data === 'confirm:yes') {
@@ -1351,6 +1949,17 @@ export class BotService {
         return;
       }
 
+      if (
+        updatedBotUpdate.pendingExpense.isDivisible === undefined ||
+        updatedBotUpdate.pendingExpense.isDivisible === null
+      ) {
+        updatedBotUpdate.state = ConversationState.ASKING_SPLIT;
+        await updatedBotUpdate.save();
+        await this.askForSplit(updatedBotUpdate, telegramUserId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
+        return;
+      }
+
       if (!updatedBotUpdate.pendingExpense.paymentMethod) {
         updatedBotUpdate.state = ConversationState.ASKING_PAYMENT_METHOD;
         await updatedBotUpdate.save();
@@ -1372,6 +1981,17 @@ export class BotService {
         updatedBotUpdate.state = ConversationState.ASKING_MERCHANT;
         await updatedBotUpdate.save();
         await this.askForMerchant(updatedBotUpdate, telegramUserId);
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
+        return;
+      }
+
+      if (
+        updatedBotUpdate.pendingExpense.isDivisible === undefined ||
+        updatedBotUpdate.pendingExpense.isDivisible === null
+      ) {
+        updatedBotUpdate.state = ConversationState.ASKING_SPLIT;
+        await updatedBotUpdate.save();
+        await this.askForSplit(updatedBotUpdate, telegramUserId);
         await this.telegramClient.answerCallbackQuery(callbackQueryId);
         return;
       }
@@ -1458,6 +2078,38 @@ export class BotService {
     const merchantLine = expense.merchantName
       ? `🏪 *Comercio:* ${expense.merchantName}\n`
       : '';
+
+    let splitLine = '';
+    if (expense.isDivisible && expense.splits && expense.splits.length > 0) {
+      const tripId = botUpdate.currentTripId!.toString();
+      const participants = await this.participantsService.findByTrip(
+        tripId,
+        botUpdate.userId!.toString(),
+      );
+      const typedParticipants =
+        participants as unknown as PopulatedParticipant[];
+
+      const splitDetails = expense.splits
+        .map((split) => {
+          const participant = typedParticipants.find(
+            (p) => p._id.toString() === split.participantId,
+          );
+          const name =
+            participant?.guestName ||
+            (participant?.userId &&
+            typeof participant.userId === 'object' &&
+            'firstName' in participant.userId
+              ? `${participant.userId.firstName} ${participant.userId.lastName}`.trim()
+              : 'Participante');
+          return `  • ${name}: ${expense.currency || 'USD'} ${split.amount}`;
+        })
+        .join('\n');
+      splitLine = `\n📊 *División:*\n${splitDetails}\n`;
+    }
+
+    const statusText =
+      expense.status === ExpenseStatus.PENDING ? '⏳ Pendiente' : '✅ Pagado';
+
     const message =
       '📋 *Resumen del gasto:*\n\n' +
       `💰 *Monto:* ${expense.amount} ${expense.currency || 'USD'}\n` +
@@ -1465,8 +2117,9 @@ export class BotService {
       merchantLine +
       `📂 *Bucket:* ${budgetName}\n` +
       `💳 *Pagó:* ${payerName}\n` +
-      `📊 *Tipo:* ${expense.isDivisible ? 'Compartido' : 'Personal'}\n` +
-      `✅ *Estado:* Pagado`;
+      `📊 *Tipo:* ${expense.isDivisible ? 'Compartido' : 'Personal'}` +
+      splitLine +
+      `\n${statusText}`;
 
     const buttons = [
       { text: '✅ Confirmar', callback_data: 'confirm:yes' },
@@ -1513,7 +2166,7 @@ export class BotService {
         merchantName: expense.merchantName,
         budgetId: expense.budgetId,
         paidByParticipantId: expense.paidByParticipantId!,
-        status: ExpenseStatus.PAID,
+        status: (expense.status as ExpenseStatus) || ExpenseStatus.PAID,
         paymentMethod:
           (expense.paymentMethod as PaymentMethod) || PaymentMethod.CASH,
         cardId: expense.cardId,

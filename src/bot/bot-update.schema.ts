@@ -8,9 +8,12 @@ export enum ConversationState {
   ASKING_BUCKET = 'asking_bucket',
   ASKING_PAYER = 'asking_payer',
   ASKING_MERCHANT = 'asking_merchant',
+  ASKING_SPLIT = 'asking_split',
+  ASKING_SPLIT_OPTION = 'asking_split_option',
+  ASKING_SPLIT_PARTICIPANTS = 'asking_split_participants',
   ASKING_PAYMENT_METHOD = 'asking_payment_method',
   ASKING_CARD = 'asking_card',
-  ASKING_SPLIT = 'asking_split',
+  ASKING_STATUS = 'asking_status',
   CONFIRMING = 'confirming',
 }
 
@@ -45,6 +48,8 @@ export class BotUpdate {
     isDivisible?: boolean;
     splitType?: string;
     splits?: Array<{ participantId: string; amount?: number }>;
+    status?: string;
+    selectedParticipants?: string[];
   };
 }
 
