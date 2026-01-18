@@ -20,6 +20,20 @@ export class RegisterDto {
   @MaxLength(50, { message: 'El apellido no puede tener más de 50 caracteres' })
   lastName: string;
 
+  @IsNotEmpty({ message: 'El nombre de usuario es obligatorio' })
+  @IsString({ message: 'El nombre de usuario debe ser texto' })
+  @MinLength(3, {
+    message: 'El nombre de usuario debe tener al menos 3 caracteres',
+  })
+  @MaxLength(30, {
+    message: 'El nombre de usuario no puede tener más de 30 caracteres',
+  })
+  @Matches(/^[a-zA-Z0-9_]+$/, {
+    message:
+      'El nombre de usuario solo puede contener letras, números y guiones bajos',
+  })
+  username: string;
+
   @IsNotEmpty({ message: 'El email es obligatorio' })
   @IsEmail({}, { message: 'El email debe tener un formato válido' })
   email: string;
