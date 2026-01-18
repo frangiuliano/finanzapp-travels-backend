@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Logger } from '@nestjs/common';
 import { BotService } from './bot.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
@@ -21,22 +21,25 @@ interface TelegramUpdate {
 
 @Controller('bot')
 export class BotController {
+  private readonly logger = new Logger(BotController.name);
+
   constructor(private readonly botService: BotService) {}
 
   @Post('webhook')
   @Public()
-  async webhook(@Body() update: TelegramUpdate) {
-    console.log('=== WEBHOOK RECIBIDO ===');
-    console.log('Update completo:', JSON.stringify(update, null, 2));
-    console.log(
-      'Tipo de update:',
-      update.message
-        ? 'message'
-        : update.callback_query
-          ? 'callback_query'
-          : 'unknown',
+  webhook(@Body() update: TelegramUpdate) {
+    this.logger.log('=== WEBHOOK RECIBIDO ===');
+    this.logger.log(`Update completo: ${JSON.stringify(update)}`);
+    this.logger.log(
+      `Tipo de update: ${update.message ? 'message' : update.callback_query ? 'callback_query' : 'unknown'}`,
     );
-    await this.botService.handleUpdate(update);
+
+    setImmediate(() => {
+      this.botService.handleUpdate(update).catch((error) => {
+        this.logger.error('❌ Error procesando update en background:', error);
+      });
+    });
+
     return { ok: true };
   }
 

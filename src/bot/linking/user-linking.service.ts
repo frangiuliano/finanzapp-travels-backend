@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument } from '../../users/user.schema';
@@ -12,6 +12,8 @@ import * as crypto from 'crypto';
 
 @Injectable()
 export class UserLinkingService {
+  private readonly logger = new Logger(UserLinkingService.name);
+
   constructor(
     @InjectModel(TelegramLinkToken.name)
     private linkTokenModel: Model<TelegramLinkTokenDocument>,
@@ -24,7 +26,7 @@ export class UserLinkingService {
     telegramUserId: number,
     command: string,
   ): Promise<void> {
-    const parts = command.split(' ');
+    const parts = command.trim().split(/\s+/);
 
     if (parts.length === 1) {
       await this.telegramClient.sendMessage(
@@ -40,7 +42,10 @@ export class UserLinkingService {
       return;
     }
 
-    const token = parts[1];
+    const token = parts[1].trim();
+    this.logger.log(
+      `Token recibido para usuario ${telegramUserId}: ${token.substring(0, 8)}...`,
+    );
     await this.linkUserWithToken(telegramUserId, token);
   }
 
@@ -48,9 +53,10 @@ export class UserLinkingService {
     telegramUserId: number,
     token: string,
   ): Promise<void> {
-    const linkToken = await this.linkTokenModel.findOne({ token }).exec();
+    const trimmedToken = token.trim();
 
-    if (!linkToken) {
+    if (!trimmedToken) {
+      this.logger.warn(`Token vacío recibido para usuario ${telegramUserId}`);
       await this.telegramClient.sendMessage(
         telegramUserId,
         '❌ Token inválido o expirado.',
@@ -58,7 +64,28 @@ export class UserLinkingService {
       return;
     }
 
+    this.logger.log(`Buscando token en BD: ${trimmedToken.substring(0, 8)}...`);
+    const linkToken = await this.linkTokenModel
+      .findOne({ token: trimmedToken })
+      .exec();
+
+    if (!linkToken) {
+      this.logger.warn(
+        `Token no encontrado en BD: ${trimmedToken.substring(0, 8)}...`,
+      );
+      await this.telegramClient.sendMessage(
+        telegramUserId,
+        '❌ Token inválido o expirado.',
+      );
+      return;
+    }
+
+    this.logger.log(
+      `Token encontrado, expira en: ${linkToken.expiresAt.toISOString()}`,
+    );
+
     if (linkToken.expiresAt < new Date()) {
+      this.logger.warn(`Token expirado para usuario ${telegramUserId}`);
       await this.telegramClient.sendMessage(
         telegramUserId,
         '❌ El token ha expirado. Genera uno nuevo en la web.',
