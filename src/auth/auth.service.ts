@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
   ConflictException,
   BadRequestException,
@@ -22,6 +23,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
@@ -155,26 +158,46 @@ export class AuthService {
   }
 
   async refreshToken(refreshToken: string): Promise<AuthResponse> {
+    this.logger.log(
+      'Refresh attempt (token length: ' + refreshToken?.length + ')',
+    );
+
     try {
       const payload = this.jwtService.verify<JwtPayload>(refreshToken, {
         secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
       });
+      this.logger.log('JWT verified, sub: ' + payload.sub);
 
-      const user = await this.userModel.findById(payload.sub).exec();
+      const user = await this.userModel
+        .findById(payload.sub)
+        .select('+refreshTokens')
+        .exec();
 
       if (!user) {
+        this.logger.warn('Refresh failed: user not found, sub: ' + payload.sub);
         throw new UnauthorizedException('Usuario no encontrado');
       }
 
       if (!user.isActive) {
+        this.logger.warn('Refresh failed: user inactive');
         throw new UnauthorizedException('Tu cuenta ha sido desactivada');
       }
 
-      if (!user.refreshTokens?.includes(refreshToken)) {
+      const tokenInList = user.refreshTokens?.includes(refreshToken);
+      this.logger.log(
+        'refreshTokens count: ' +
+          (user.refreshTokens?.length ?? 0) +
+          ', token in list: ' +
+          tokenInList,
+      );
+
+      if (!tokenInList) {
+        this.logger.warn('Refresh failed: token not in user.refreshTokens');
         throw new UnauthorizedException('Refresh token inválido');
       }
 
       const tokens = await this.generateTokens(user);
+      this.logger.log('Refresh success for sub: ' + payload.sub);
 
       return {
         ...tokens,
@@ -186,7 +209,13 @@ export class AuthService {
       }
 
       if (error && typeof error === 'object' && 'name' in error) {
-        const errorWithName = error as { name: string };
+        const errorWithName = error as { name: string; message?: string };
+        this.logger.warn(
+          'Refresh JWT error: ' +
+            errorWithName.name +
+            ' - ' +
+            (errorWithName.message ?? ''),
+        );
         if (
           errorWithName.name === 'TokenExpiredError' ||
           errorWithName.name === 'JsonWebTokenError'
@@ -195,6 +224,7 @@ export class AuthService {
         }
       }
 
+      this.logger.error('Refresh unexpected error', error);
       throw new UnauthorizedException('Error al refrescar el token');
     }
   }
@@ -339,7 +369,10 @@ export class AuthService {
   }
 
   async logout(userId: string, refreshToken: string): Promise<void> {
-    const user = await this.userModel.findById(userId).exec();
+    const user = await this.userModel
+      .findById(userId)
+      .select('+refreshTokens')
+      .exec();
 
     if (user && user.refreshTokens) {
       user.refreshTokens = user.refreshTokens.filter(
