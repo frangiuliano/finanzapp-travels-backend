@@ -24,6 +24,14 @@ import { Public } from './decorators/public.decorator';
 import { GetUser } from './decorators/get-user.decorator';
 import { UserDocument } from '../users/user.schema';
 
+const getRefreshTokenCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  maxAge: 30 * 24 * 60 * 60 * 1000,
+  path: '/',
+});
+
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -37,13 +45,11 @@ export class AuthController {
   ) {
     const result = await this.authService.register(registerDto);
 
-    res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      path: '/',
-    });
+    res.cookie(
+      'refreshToken',
+      result.refreshToken,
+      getRefreshTokenCookieOptions(),
+    );
 
     return {
       accessToken: result.accessToken,
@@ -60,13 +66,11 @@ export class AuthController {
   ) {
     const result = await this.authService.login(loginDto);
 
-    res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      path: '/',
-    });
+    res.cookie(
+      'refreshToken',
+      result.refreshToken,
+      getRefreshTokenCookieOptions(),
+    );
 
     return {
       accessToken: result.accessToken,
@@ -90,13 +94,11 @@ export class AuthController {
 
     const result = await this.authService.refreshToken(refreshToken);
 
-    res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      path: '/',
-    });
+    res.cookie(
+      'refreshToken',
+      result.refreshToken,
+      getRefreshTokenCookieOptions(),
+    );
 
     return {
       accessToken: result.accessToken,
@@ -157,12 +159,7 @@ export class AuthController {
       await this.authService.logout(user._id.toString(), refreshToken);
     }
 
-    res.clearCookie('refreshToken', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-    });
+    res.clearCookie('refreshToken', getRefreshTokenCookieOptions());
 
     return { message: 'Sesión cerrada exitosamente' };
   }
