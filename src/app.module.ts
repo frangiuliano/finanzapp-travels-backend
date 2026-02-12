@@ -21,8 +21,8 @@ import { CardsModule } from './cards/cards.module';
     }),
     ThrottlerModule.forRoot([
       {
-        ttl: 60000, // 1 minuto en milisegundos
-        limit: 100, // 100 requests por minuto
+        ttl: 60000,
+        limit: 100,
       },
     ]),
     MongooseModule.forRootAsync({

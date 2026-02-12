@@ -16,8 +16,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      // Note: Using 'as any' is necessary due to type incompatibility
-      // between ConfigService return type and JwtModuleOptions.expiresIn
       useFactory: (configService: ConfigService): any => {
         const jwtSecret = configService.get<string>('JWT_SECRET');
         const expiresIn = configService.get<string>('JWT_EXPIRES_IN', '1h');

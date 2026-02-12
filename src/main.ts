@@ -7,17 +7,15 @@ import helmet from 'helmet';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Configurar Helmet para headers de seguridad
   app.use(helmet());
 
-  // Configurar ValidationPipe más estricto
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // Elimina propiedades no definidas en el DTO
-      forbidNonWhitelisted: true, // Rechaza requests con propiedades extra
-      transform: true, // Transforma los tipos automáticamente
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
       transformOptions: {
-        enableImplicitConversion: true, // Convierte tipos implícitamente (ej: string a number)
+        enableImplicitConversion: true,
       },
     }),
   );
