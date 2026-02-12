@@ -24,7 +24,13 @@ import { Public } from './decorators/public.decorator';
 import { GetUser } from './decorators/get-user.decorator';
 import { UserDocument } from '../users/user.schema';
 
-const getRefreshTokenCookieOptions = () => ({
+const getRefreshTokenCookieOptions = (): {
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: 'lax' | 'none';
+  maxAge: number;
+  path: string;
+} => ({
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
