@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { BoardsService } from './trips.service';
 import { Board, BoardType } from './board.schema';
 import {
@@ -184,6 +188,72 @@ describe('BoardsService', () => {
       await expect(
         service.assertTravelFeatures(boardId.toString()),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('isTravelBoard', () => {
+    it('should return true for travel boards', async () => {
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.TRAVEL,
+      });
+      await expect(service.isTravelBoard(boardId.toString())).resolves.toBe(
+        true,
+      );
+    });
+
+    it('should return false for everyday boards', async () => {
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.EVERYDAY,
+      });
+      await expect(service.isTravelBoard(boardId.toString())).resolves.toBe(
+        false,
+      );
+    });
+  });
+
+  describe('update type immutability', () => {
+    it('should reject changing board type', async () => {
+      participantModel.findOne.mockResolvedValue({
+        role: ParticipantRole.OWNER,
+      });
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.TRAVEL,
+        name: 'Europa',
+        save: jest.fn(),
+      });
+
+      await expect(
+        service.update(
+          boardId.toString(),
+          { type: BoardType.EVERYDAY },
+          userId,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should allow updating name without changing type', async () => {
+      const save = jest.fn().mockResolvedValue({
+        populate: jest.fn().mockResolvedValue({
+          _id: boardId,
+          name: 'Nuevo',
+          type: BoardType.TRAVEL,
+        }),
+      });
+      participantModel.findOne.mockResolvedValue({
+        role: ParticipantRole.OWNER,
+      });
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.TRAVEL,
+        name: 'Europa',
+        save,
+      });
+
+      await service.update(boardId.toString(), { name: 'Nuevo' }, userId);
+      expect(save).toHaveBeenCalled();
     });
   });
 });
