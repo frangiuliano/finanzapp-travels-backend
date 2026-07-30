@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  OnModuleInit,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Trip, TripDocument } from './trip.schema';
+import { Board, BoardDocument, BoardType } from './board.schema';
 import {
   Participant,
   ParticipantDocument,
@@ -16,14 +18,16 @@ import {
   Invitation,
   InvitationDocument,
 } from '../participants/schemas/invitation.schema';
-import { CreateTripDto } from './dto/create-trip.dto';
-import { UpdateTripDto } from './dto/update-trip.dto';
+import { CreateBoardDto } from './dto/create-board.dto';
+import { UpdateBoardDto } from './dto/update-board.dto';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 
 @Injectable()
-export class TripsService {
+export class BoardsService implements OnModuleInit {
+  private readonly logger = new Logger(BoardsService.name);
+
   constructor(
-    @InjectModel(Trip.name) private tripModel: Model<TripDocument>,
+    @InjectModel(Board.name) private boardModel: Model<BoardDocument>,
     @InjectModel(Participant.name)
     private participantModel: Model<ParticipantDocument>,
     @InjectModel(Budget.name) private budgetModel: Model<BudgetDocument>,
@@ -31,109 +35,150 @@ export class TripsService {
     private invitationModel: Model<InvitationDocument>,
   ) {}
 
-  async create(createTripDto: CreateTripDto, userId: string): Promise<Trip> {
-    const trip = new this.tripModel({
-      ...createTripDto,
-      baseCurrency: createTripDto.baseCurrency || DEFAULT_CURRENCY,
+  async onModuleInit(): Promise<void> {
+    const result = await this.boardModel.updateMany(
+      { type: { $exists: false } },
+      { $set: { type: BoardType.TRAVEL } },
+    );
+    if (result.modifiedCount > 0) {
+      this.logger.log(
+        `Backfilled type=travel on ${result.modifiedCount} existing board(s)`,
+      );
+    }
+  }
+
+  async create(createBoardDto: CreateBoardDto, userId: string): Promise<Board> {
+    const board = new this.boardModel({
+      ...createBoardDto,
+      baseCurrency: createBoardDto.baseCurrency || DEFAULT_CURRENCY,
+      type: createBoardDto.type ?? BoardType.TRAVEL,
       createdBy: new Types.ObjectId(userId),
     });
 
-    const savedTrip = await trip.save();
+    const savedBoard = await board.save();
 
     await this.participantModel.create({
-      tripId: savedTrip._id,
+      tripId: savedBoard._id,
       userId: new Types.ObjectId(userId),
       role: ParticipantRole.OWNER,
     });
 
-    return savedTrip;
+    return savedBoard;
   }
 
   async findAll(
     userId: string,
-  ): Promise<(Trip & { userRole: ParticipantRole })[]> {
+  ): Promise<(Board & { userRole: ParticipantRole })[]> {
     const participants = await this.participantModel
       .find({ userId: new Types.ObjectId(userId) })
       .select('tripId role')
       .lean();
 
-    const tripIds = participants.map((p) => p.tripId);
+    const boardIds = participants.map((p) => p.tripId);
 
-    if (tripIds.length === 0) {
+    if (boardIds.length === 0) {
       return [];
     }
 
-    const trips = await this.tripModel
-      .find({ _id: { $in: tripIds } })
+    const boards = await this.boardModel
+      .find({ _id: { $in: boardIds } })
       .populate('createdBy', 'firstName lastName email')
       .sort({ createdAt: -1 })
       .lean();
 
-    const tripsWithRole = trips.map((trip) => {
+    return boards.map((board) => {
       const participant = participants.find(
-        (p) => p.tripId.toString() === trip._id.toString(),
+        (p) => p.tripId.toString() === board._id.toString(),
       );
       return {
-        ...trip,
+        ...board,
+        type: board.type ?? BoardType.TRAVEL,
         userRole: participant?.role || ParticipantRole.MEMBER,
       };
     });
-
-    return tripsWithRole;
   }
 
-  async findOne(id: string, userId: string): Promise<Trip> {
+  async findOne(id: string, userId: string): Promise<Board> {
     const participant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(id),
       userId: new Types.ObjectId(userId),
     });
 
     if (!participant) {
-      throw new NotFoundException('Viaje no encontrado o no tienes acceso');
+      throw new NotFoundException('Tablero no encontrado o no tienes acceso');
     }
 
-    const trip = await this.tripModel
+    const board = await this.boardModel
       .findById(id)
       .populate('createdBy', 'firstName lastName email')
       .lean();
 
-    if (!trip) {
-      throw new NotFoundException('Viaje no encontrado');
+    if (!board) {
+      throw new NotFoundException('Tablero no encontrado');
     }
 
-    return trip;
+    return {
+      ...board,
+      type: board.type ?? BoardType.TRAVEL,
+    };
+  }
+
+  async findByIdOrFail(id: string): Promise<BoardDocument> {
+    const board = await this.boardModel.findById(id);
+
+    if (!board) {
+      throw new NotFoundException('Tablero no encontrado');
+    }
+
+    if (!board.type) {
+      board.type = BoardType.TRAVEL;
+    }
+
+    return board;
+  }
+
+  async assertTravelFeatures(boardId: string): Promise<BoardDocument> {
+    const board = await this.findByIdOrFail(boardId);
+
+    if (board.type !== BoardType.TRAVEL) {
+      throw new ForbiddenException(
+        'Esta operación solo está disponible en tableros de tipo travel',
+      );
+    }
+
+    return board;
   }
 
   async update(
     id: string,
-    updateTripDto: UpdateTripDto,
+    updateBoardDto: UpdateBoardDto,
     userId: string,
-  ): Promise<Trip> {
+  ): Promise<Board> {
     const participant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(id),
       userId: new Types.ObjectId(userId),
     });
 
     if (!participant) {
-      throw new NotFoundException('Viaje no encontrado o no tienes acceso');
+      throw new NotFoundException('Tablero no encontrado o no tienes acceso');
     }
 
     if (participant.role !== ParticipantRole.OWNER) {
       throw new ForbiddenException(
-        'Solo el propietario del viaje puede actualizarlo',
+        'Solo el propietario del tablero puede actualizarlo',
       );
     }
 
-    const trip = await this.tripModel.findById(id);
+    const board = await this.boardModel.findById(id);
 
-    if (!trip) {
-      throw new NotFoundException('Viaje no encontrado');
+    if (!board) {
+      throw new NotFoundException('Tablero no encontrado');
     }
 
-    Object.assign(trip, updateTripDto);
-    const updatedTrip = await trip.save();
+    Object.assign(board, updateBoardDto);
+    const updatedBoard = await board.save();
 
-    return updatedTrip.populate('createdBy', 'firstName lastName email');
+    return updatedBoard.populate('createdBy', 'firstName lastName email');
   }
 
   async remove(id: string, userId: string): Promise<void> {
@@ -143,29 +188,29 @@ export class TripsService {
     });
 
     if (!participant) {
-      throw new NotFoundException('Viaje no encontrado o no tienes acceso');
+      throw new NotFoundException('Tablero no encontrado o no tienes acceso');
     }
 
     if (participant.role !== ParticipantRole.OWNER) {
       throw new ForbiddenException(
-        'Solo el propietario del viaje puede eliminarlo',
+        'Solo el propietario del tablero puede eliminarlo',
       );
     }
 
-    const trip = await this.tripModel.findById(id);
+    const board = await this.boardModel.findById(id);
 
-    if (!trip) {
-      throw new NotFoundException('Viaje no encontrado');
+    if (!board) {
+      throw new NotFoundException('Tablero no encontrado');
     }
 
-    const tripId = new Types.ObjectId(id);
+    const boardId = new Types.ObjectId(id);
 
-    await this.budgetModel.deleteMany({ tripId });
-
-    await this.participantModel.deleteMany({ tripId });
-
-    await this.invitationModel.deleteMany({ tripId });
-
-    await this.tripModel.findByIdAndDelete(id);
+    await this.budgetModel.deleteMany({ tripId: boardId });
+    await this.participantModel.deleteMany({ tripId: boardId });
+    await this.invitationModel.deleteMany({ tripId: boardId });
+    await this.boardModel.findByIdAndDelete(id);
   }
 }
+
+/** @deprecated Use BoardsService */
+export { BoardsService as TripsService };

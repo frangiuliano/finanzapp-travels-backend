@@ -5,7 +5,7 @@ import { Document, Types } from 'mongoose';
 
 @Schema({ timestamps: true })
 export class Budget {
-  @Prop({ type: Types.ObjectId, ref: 'Trip', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'Board', required: true })
   tripId: Types.ObjectId;
 
   @Prop({ required: true })

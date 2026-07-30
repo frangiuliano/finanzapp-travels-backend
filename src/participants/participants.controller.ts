@@ -115,12 +115,34 @@ export class ParticipantsController {
     };
   }
 
+  @Get('board/:boardId')
+  async getParticipantsByBoard(
+    @Param('boardId') boardId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    const participants = await this.participantsService.findByTrip(
+      boardId,
+      userId,
+    );
+    return {
+      participants,
+    };
+  }
+
   @Get('trip/:tripId/invitations')
   async getPendingInvitations(
     @Param('tripId') tripId: string,
     @GetUser('_id') userId: string,
   ) {
     return this.participantsService.getPendingInvitations(tripId, userId);
+  }
+
+  @Get('board/:boardId/invitations')
+  async getPendingInvitationsByBoard(
+    @Param('boardId') boardId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    return this.participantsService.getPendingInvitations(boardId, userId);
   }
 
   @Delete('trip/:tripId/participant/:participantId')
@@ -132,6 +154,20 @@ export class ParticipantsController {
   ) {
     await this.participantsService.removeParticipant(
       tripId,
+      participantId,
+      userId,
+    );
+  }
+
+  @Delete('board/:boardId/participant/:participantId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeParticipantByBoard(
+    @Param('boardId') boardId: string,
+    @Param('participantId') participantId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    await this.participantsService.removeParticipant(
+      boardId,
       participantId,
       userId,
     );

@@ -10,7 +10,7 @@ export enum InvitationStatus {
 
 @Schema({ timestamps: true })
 export class Invitation {
-  @Prop({ type: Types.ObjectId, ref: 'Trip', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'Board', required: true })
   tripId: Types.ObjectId;
 
   @Prop({ required: true, lowercase: true, trim: true })

@@ -41,17 +41,19 @@ export class ExpensesController {
   async findAll(
     @Query('tripId') tripId: string,
     @GetUser('_id') userId: string,
+    @Query('boardId') boardId?: string,
     @Query('budgetId') budgetId?: string,
     @Query('status') status?: ExpenseStatus,
   ) {
-    if (!tripId) {
+    const resolvedBoardId = boardId || tripId;
+    if (!resolvedBoardId) {
       return {
         expenses: [],
       };
     }
 
     const expenses = await this.expensesService.findAll(
-      tripId,
+      resolvedBoardId,
       userId,
       budgetId,
       status,
@@ -59,6 +61,72 @@ export class ExpensesController {
 
     return {
       expenses,
+    };
+  }
+
+  @Get('trip/:tripId/summary')
+  async getTripExpenseSummary(
+    @Param('tripId') tripId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    const summary = await this.expensesService.getTripExpenseSummary(
+      tripId,
+      userId,
+    );
+    return {
+      summary,
+    };
+  }
+
+  @Get('board/:boardId/summary')
+  async getBoardExpenseSummary(
+    @Param('boardId') boardId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    const summary = await this.expensesService.getTripExpenseSummary(
+      boardId,
+      userId,
+    );
+    return {
+      summary,
+    };
+  }
+
+  @Get('trip/:tripId/debts')
+  async getParticipantDebts(
+    @Param('tripId') tripId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    return this.expensesService.getParticipantDebts(tripId, userId);
+  }
+
+  @Get('board/:boardId/debts')
+  async getBoardParticipantDebts(
+    @Param('boardId') boardId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    return this.expensesService.getParticipantDebts(boardId, userId);
+  }
+
+  @Get('participant/:participantId/balance')
+  async getParticipantBalance(
+    @Param('participantId') participantId: string,
+    @Query('tripId') tripId: string,
+    @GetUser('_id') userId: string,
+    @Query('boardId') boardId?: string,
+  ) {
+    const resolvedBoardId = boardId || tripId;
+    if (!resolvedBoardId) {
+      throw new BadRequestException('boardId o tripId es requerido');
+    }
+
+    const balance = await this.expensesService.getParticipantBalance(
+      participantId,
+      resolvedBoardId,
+      userId,
+    );
+    return {
+      balance,
     };
   }
 
@@ -91,52 +159,6 @@ export class ExpensesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id') id: string, @GetUser('_id') userId: string) {
     await this.expensesService.remove(id, userId);
-  }
-
-  @Get('trip/:tripId/summary')
-  async getTripExpenseSummary(
-    @Param('tripId') tripId: string,
-    @GetUser('_id') userId: string,
-  ) {
-    const summary = await this.expensesService.getTripExpenseSummary(
-      tripId,
-      userId,
-    );
-    return {
-      summary,
-    };
-  }
-
-  @Get('participant/:participantId/balance')
-  async getParticipantBalance(
-    @Param('participantId') participantId: string,
-    @Query('tripId') tripId: string,
-    @GetUser('_id') userId: string,
-  ) {
-    if (!tripId) {
-      throw new BadRequestException('tripId es requerido');
-    }
-
-    const balance = await this.expensesService.getParticipantBalance(
-      participantId,
-      tripId,
-      userId,
-    );
-    return {
-      balance,
-    };
-  }
-
-  @Get('trip/:tripId/debts')
-  async getParticipantDebts(
-    @Param('tripId') tripId: string,
-    @GetUser('_id') userId: string,
-  ) {
-    const debts = await this.expensesService.getParticipantDebts(
-      tripId,
-      userId,
-    );
-    return debts;
   }
 
   @Post(':id/settle')

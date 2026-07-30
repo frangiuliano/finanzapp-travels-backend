@@ -19,10 +19,12 @@ import {
   Participant,
   ParticipantDocument,
 } from '../participants/schemas/participant.schema';
-import { Trip, TripDocument } from '../trips/trip.schema';
+import { BoardType } from '../trips/board.schema';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
+import { resolveBoardId } from '../common/utils/resolve-board-id';
+import { BoardsService } from '../trips/trips.service';
 
 interface PopulatedUser {
   _id: Types.ObjectId;
@@ -147,53 +149,84 @@ export class ExpensesService {
     @InjectModel(Budget.name) private budgetModel: Model<BudgetDocument>,
     @InjectModel(Participant.name)
     private participantModel: Model<ParticipantDocument>,
-    @InjectModel(Trip.name) private tripModel: Model<TripDocument>,
+    private boardsService: BoardsService,
   ) {}
 
   async create(
     createExpenseDto: CreateExpenseDto,
     userId: string,
   ): Promise<Expense> {
+    const boardId = resolveBoardId(createExpenseDto);
+    if (!boardId) {
+      throw new BadRequestException('boardId o tripId es requerido');
+    }
+
+    const board = await this.boardsService.findByIdOrFail(boardId);
+
     const userParticipant = await this.participantModel.findOne({
-      tripId: new Types.ObjectId(createExpenseDto.tripId),
+      tripId: new Types.ObjectId(boardId),
       userId: new Types.ObjectId(userId),
     });
 
     if (!userParticipant) {
       throw new ForbiddenException(
-        'No tienes acceso a este viaje o el viaje no existe',
+        'No tienes acceso a este tablero o el tablero no existe',
       );
     }
 
     let budget: BudgetDocument | null = null;
     if (createExpenseDto.budgetId) {
+      if (board.type !== BoardType.TRAVEL) {
+        throw new BadRequestException(
+          'Los presupuestos de viaje solo aplican a tableros travel',
+        );
+      }
+
       budget = await this.budgetModel.findById(createExpenseDto.budgetId);
 
       if (!budget) {
         throw new NotFoundException('Presupuesto no encontrado');
       }
 
-      if (budget.tripId.toString() !== createExpenseDto.tripId) {
+      if (budget.tripId.toString() !== boardId) {
         throw new BadRequestException(
-          'El presupuesto no pertenece a este viaje',
+          'El presupuesto no pertenece a este tablero',
         );
       }
     }
 
+    const paidByParticipantId =
+      createExpenseDto.paidByParticipantId || userParticipant._id.toString();
+
+    if (
+      board.type === BoardType.TRAVEL &&
+      !createExpenseDto.paidByParticipantId
+    ) {
+      throw new BadRequestException(
+        'El ID del participante que pagó es obligatorio en tableros travel',
+      );
+    }
+
     const paidByParticipant = await this.participantModel.findOne({
-      _id: new Types.ObjectId(createExpenseDto.paidByParticipantId),
-      tripId: new Types.ObjectId(createExpenseDto.tripId),
+      _id: new Types.ObjectId(paidByParticipantId),
+      tripId: new Types.ObjectId(boardId),
     });
 
     if (!paidByParticipant) {
       throw new NotFoundException(
-        'El participante que pagó no existe o no pertenece a este viaje',
+        'El participante que pagó no existe o no pertenece a este tablero',
       );
     }
 
     const status = createExpenseDto.status || ExpenseStatus.PAID;
 
     const isDivisible = createExpenseDto.isDivisible ?? false;
+
+    if (isDivisible && board.type !== BoardType.TRAVEL) {
+      throw new BadRequestException(
+        'Los splits solo están disponibles en tableros travel',
+      );
+    }
 
     if (isDivisible) {
       if (!createExpenseDto.splitType || !createExpenseDto.splits) {
@@ -216,7 +249,7 @@ export class ExpensesService {
     }
 
     const tripParticipants = await this.participantModel.find({
-      tripId: new Types.ObjectId(createExpenseDto.tripId),
+      tripId: new Types.ObjectId(boardId),
     });
 
     let processedSplits: ExpenseSplit[] | undefined;
@@ -261,7 +294,7 @@ export class ExpensesService {
       for (const participantId of splitParticipantIds) {
         if (!validParticipantIds.some((id) => id.equals(participantId))) {
           throw new BadRequestException(
-            `El participante ${participantId.toString()} no pertenece a este viaje`,
+            `El participante ${participantId.toString()} no pertenece a este tablero`,
           );
         }
       }
@@ -283,14 +316,12 @@ export class ExpensesService {
 
     const expense = new this.expenseModel({
       ...createExpenseDto,
-      tripId: new Types.ObjectId(createExpenseDto.tripId),
+      tripId: new Types.ObjectId(boardId),
       budgetId: createExpenseDto.budgetId
         ? new Types.ObjectId(createExpenseDto.budgetId)
         : undefined,
       currency: createExpenseDto.currency || DEFAULT_CURRENCY,
-      paidByParticipantId: new Types.ObjectId(
-        createExpenseDto.paidByParticipantId,
-      ),
+      paidByParticipantId: new Types.ObjectId(paidByParticipantId),
       paymentMethod: createExpenseDto.paymentMethod || 'cash',
       cardId: createExpenseDto.cardId
         ? new Types.ObjectId(createExpenseDto.cardId)
@@ -313,7 +344,7 @@ export class ExpensesService {
     }
 
     this.logger.log(
-      `Gasto creado: ${savedExpense.description} (${savedExpense.amount} ${savedExpense.currency}) en el viaje ${createExpenseDto.tripId}`,
+      `Gasto creado: ${savedExpense.description} (${savedExpense.amount} ${savedExpense.currency}) en el tablero ${boardId}`,
     );
 
     const populatedExpense = await this.expenseModel
@@ -456,6 +487,20 @@ export class ExpensesService {
 
     if (!expense) {
       throw new NotFoundException('Gasto no encontrado');
+    }
+
+    const board = await this.boardsService.findByIdOrFail(
+      expense.tripId.toString(),
+    );
+
+    if (
+      board.type !== BoardType.TRAVEL &&
+      (updateExpenseDto.isDivisible ||
+        (updateExpenseDto.splits && updateExpenseDto.splits.length > 0))
+    ) {
+      throw new BadRequestException(
+        'Los splits solo están disponibles en tableros travel',
+      );
     }
 
     const userParticipant = await this.participantModel.findOne({
@@ -926,6 +971,8 @@ export class ExpensesService {
     totalOwed: number;
     balance: number;
   }> {
+    await this.boardsService.assertTravelFeatures(tripId);
+
     const userParticipant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(tripId),
       userId: new Types.ObjectId(userId),
@@ -933,7 +980,7 @@ export class ExpensesService {
 
     if (!userParticipant) {
       throw new ForbiddenException(
-        'No tienes acceso a este viaje o el viaje no existe',
+        'No tienes acceso a este tablero o el tablero no existe',
       );
     }
 
@@ -1027,6 +1074,8 @@ export class ExpensesService {
       amount: number;
     }>;
   }> {
+    await this.boardsService.assertTravelFeatures(tripId);
+
     const userParticipant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(tripId),
       userId: new Types.ObjectId(userId),
@@ -1034,7 +1083,7 @@ export class ExpensesService {
 
     if (!userParticipant) {
       throw new ForbiddenException(
-        'No tienes acceso a este viaje o el viaje no existe',
+        'No tienes acceso a este tablero o el tablero no existe',
       );
     }
 
@@ -1149,6 +1198,8 @@ export class ExpensesService {
       throw new NotFoundException('Gasto no encontrado');
     }
 
+    await this.boardsService.assertTravelFeatures(expense.tripId.toString());
+
     if (expense.status === ExpenseStatus.PAID) {
       throw new BadRequestException('Este gasto ya está marcado como pagado');
     }
@@ -1160,7 +1211,7 @@ export class ExpensesService {
 
     if (!userParticipant) {
       throw new ForbiddenException(
-        'No tienes acceso a este gasto o el viaje no existe',
+        'No tienes acceso a este gasto o el tablero no existe',
       );
     }
 

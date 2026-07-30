@@ -12,6 +12,7 @@ import {
   Min,
   MinLength,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ExpenseStatus, SplitType, PaymentMethod } from '../expense.schema';
@@ -19,9 +20,15 @@ import { ExpenseSplitDto } from './expense-split.dto';
 import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
 
 export class CreateExpenseDto {
-  @IsNotEmpty({ message: 'El ID del viaje es obligatorio' })
-  @IsMongoId({ message: 'El ID del viaje no es válido' })
-  tripId: string;
+  @ValidateIf((o: CreateExpenseDto) => !o.tripId)
+  @IsNotEmpty({ message: 'boardId o tripId es requerido' })
+  @IsMongoId({ message: 'El ID del tablero no es válido' })
+  boardId?: string;
+
+  @ValidateIf((o: CreateExpenseDto) => !o.boardId)
+  @IsNotEmpty({ message: 'boardId o tripId es requerido' })
+  @IsMongoId({ message: 'El ID del tablero no es válido' })
+  tripId?: string;
 
   @IsOptional()
   @IsMongoId({ message: 'El ID del presupuesto no es válido' })
@@ -66,9 +73,9 @@ export class CreateExpenseDto {
   })
   category?: string;
 
-  @IsNotEmpty({ message: 'El ID del participante que pagó es obligatorio' })
+  @IsOptional()
   @IsMongoId({ message: 'El ID del participante no es válido' })
-  paidByParticipantId: string;
+  paidByParticipantId?: string;
 
   @IsOptional()
   @IsEnum(ExpenseStatus, {
@@ -104,5 +111,5 @@ export class CreateExpenseDto {
 
   @IsOptional()
   @IsString()
-  expenseDate?: string; // ISO date string
+  expenseDate?: string;
 }

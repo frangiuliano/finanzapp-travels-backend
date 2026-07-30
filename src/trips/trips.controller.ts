@@ -10,70 +10,77 @@ import {
   HttpStatus,
   UseGuards,
 } from '@nestjs/common';
-import { TripsService } from './trips.service';
-import { CreateTripDto } from './dto/create-trip.dto';
-import { UpdateTripDto } from './dto/update-trip.dto';
+import { BoardsService } from './trips.service';
+import { CreateBoardDto } from './dto/create-board.dto';
+import { UpdateBoardDto } from './dto/update-board.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { UserDocument } from '../users/user.schema';
 
-@Controller('trips')
+@Controller(['boards', 'trips'])
 @UseGuards(JwtAuthGuard)
-export class TripsController {
-  constructor(private readonly tripsService: TripsService) {}
+export class BoardsController {
+  constructor(private readonly boardsService: BoardsService) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(
-    @Body() createTripDto: CreateTripDto,
+    @Body() createBoardDto: CreateBoardDto,
     @GetUser() user: UserDocument,
   ) {
-    const trip = await this.tripsService.create(
-      createTripDto,
+    const board = await this.boardsService.create(
+      createBoardDto,
       user._id.toString(),
     );
     return {
-      message: 'Viaje creado exitosamente',
-      trip,
+      message: 'Tablero creado exitosamente',
+      board,
+      trip: board,
     };
   }
 
   @Get()
   async findAll(@GetUser() user: UserDocument) {
-    const trips = await this.tripsService.findAll(user._id.toString());
+    const boards = await this.boardsService.findAll(user._id.toString());
     return {
-      trips,
+      boards,
+      trips: boards,
     };
   }
 
   @Get(':id')
   async findOne(@Param('id') id: string, @GetUser() user: UserDocument) {
-    const trip = await this.tripsService.findOne(id, user._id.toString());
+    const board = await this.boardsService.findOne(id, user._id.toString());
     return {
-      trip,
+      board,
+      trip: board,
     };
   }
 
   @Patch(':id')
   async update(
     @Param('id') id: string,
-    @Body() updateTripDto: UpdateTripDto,
+    @Body() updateBoardDto: UpdateBoardDto,
     @GetUser() user: UserDocument,
   ) {
-    const trip = await this.tripsService.update(
+    const board = await this.boardsService.update(
       id,
-      updateTripDto,
+      updateBoardDto,
       user._id.toString(),
     );
     return {
-      message: 'Viaje actualizado exitosamente',
-      trip,
+      message: 'Tablero actualizado exitosamente',
+      board,
+      trip: board,
     };
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id') id: string, @GetUser() user: UserDocument) {
-    await this.tripsService.remove(id, user._id.toString());
+    await this.boardsService.remove(id, user._id.toString());
   }
 }
+
+/** @deprecated Use BoardsController */
+export { BoardsController as TripsController };

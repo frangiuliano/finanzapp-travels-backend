@@ -8,10 +8,9 @@ import {
   Participant,
   ParticipantSchema,
 } from '../participants/schemas/participant.schema';
-import { Trip, TripSchema } from '../trips/trip.schema';
 import { ParticipantsModule } from '../participants/participants.module';
 import { BudgetsModule } from '../budgets/budgets.module';
-import { TripsModule } from '../trips/trips.module';
+import { BoardsModule } from '../trips/trips.module';
 
 @Module({
   imports: [
@@ -19,11 +18,10 @@ import { TripsModule } from '../trips/trips.module';
       { name: Expense.name, schema: ExpenseSchema },
       { name: Budget.name, schema: BudgetSchema },
       { name: Participant.name, schema: ParticipantSchema },
-      { name: Trip.name, schema: TripSchema },
     ]),
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BudgetsModule),
-    forwardRef(() => TripsModule),
+    forwardRef(() => BoardsModule),
   ],
   controllers: [ExpensesController],
   providers: [ExpensesService],

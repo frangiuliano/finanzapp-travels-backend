@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -13,6 +14,8 @@ import {
 import { CreateBudgetDto } from './dto/create-budget.dto';
 import { UpdateBudgetDto } from './dto/update-budget.dto';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
+import { BoardsService } from '../trips/trips.service';
+import { resolveBoardId } from '../common/utils/resolve-board-id';
 
 @Injectable()
 export class BudgetsService {
@@ -20,26 +23,34 @@ export class BudgetsService {
     @InjectModel(Budget.name) private budgetModel: Model<BudgetDocument>,
     @InjectModel(Participant.name)
     private participantModel: Model<ParticipantDocument>,
+    private boardsService: BoardsService,
   ) {}
 
   async create(
     createBudgetDto: CreateBudgetDto,
     userId: string,
   ): Promise<Budget> {
+    const boardId = resolveBoardId(createBudgetDto);
+    if (!boardId) {
+      throw new BadRequestException('boardId o tripId es requerido');
+    }
+
+    await this.boardsService.assertTravelFeatures(boardId);
+
     const participant = await this.participantModel.findOne({
-      tripId: new Types.ObjectId(createBudgetDto.tripId),
+      tripId: new Types.ObjectId(boardId),
       userId: new Types.ObjectId(userId),
     });
 
     if (!participant) {
       throw new ForbiddenException(
-        'No tienes acceso a este viaje o el viaje no existe',
+        'No tienes acceso a este tablero o el tablero no existe',
       );
     }
 
     const budget = new this.budgetModel({
       ...createBudgetDto,
-      tripId: new Types.ObjectId(createBudgetDto.tripId),
+      tripId: new Types.ObjectId(boardId),
       currency: createBudgetDto.currency || DEFAULT_CURRENCY,
       createdBy: new Types.ObjectId(userId),
     });
@@ -48,6 +59,8 @@ export class BudgetsService {
   }
 
   async findAllByTrip(tripId: string, userId: string): Promise<Budget[]> {
+    await this.boardsService.assertTravelFeatures(tripId);
+
     const participant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(tripId),
       userId: new Types.ObjectId(userId),
@@ -55,7 +68,7 @@ export class BudgetsService {
 
     if (!participant) {
       throw new ForbiddenException(
-        'No tienes acceso a este viaje o el viaje no existe',
+        'No tienes acceso a este tablero o el tablero no existe',
       );
     }
 

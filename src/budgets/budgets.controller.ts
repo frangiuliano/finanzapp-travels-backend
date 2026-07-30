@@ -43,14 +43,16 @@ export class BudgetsController {
   async findAllByTrip(
     @Query('tripId') tripId: string,
     @GetUser() user: UserDocument,
+    @Query('boardId') boardId?: string,
   ) {
-    if (!tripId) {
+    const resolvedBoardId = boardId || tripId;
+    if (!resolvedBoardId) {
       return {
         budgets: [],
       };
     }
     const budgets = await this.budgetsService.findAllByTrip(
-      tripId,
+      resolvedBoardId,
       user._id.toString(),
     );
     return {

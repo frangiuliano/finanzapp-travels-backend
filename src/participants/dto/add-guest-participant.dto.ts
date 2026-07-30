@@ -6,12 +6,19 @@ import {
   IsOptional,
   MinLength,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class AddGuestParticipantDto {
-  @IsNotEmpty({ message: 'El ID del viaje es obligatorio' })
-  @IsMongoId({ message: 'El ID del viaje no es válido' })
-  tripId: string;
+  @ValidateIf((o: AddGuestParticipantDto) => !o.tripId)
+  @IsNotEmpty({ message: 'boardId o tripId es requerido' })
+  @IsMongoId({ message: 'El ID del tablero no es válido' })
+  boardId?: string;
+
+  @ValidateIf((o: AddGuestParticipantDto) => !o.boardId)
+  @IsNotEmpty({ message: 'boardId o tripId es requerido' })
+  @IsMongoId({ message: 'El ID del tablero no es válido' })
+  tripId?: string;
 
   @IsNotEmpty({ message: 'El nombre del invitado es obligatorio' })
   @IsString({ message: 'El nombre debe ser texto' })

@@ -6,7 +6,7 @@ import { Participant, ParticipantSchema } from './schemas/participant.schema';
 import { Invitation, InvitationSchema } from './schemas/invitation.schema';
 import { User, UserSchema } from '../users/user.schema';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { TripsModule } from '../trips/trips.module';
+import { BoardsModule } from '../trips/trips.module';
 
 @Module({
   imports: [
@@ -15,7 +15,7 @@ import { TripsModule } from '../trips/trips.module';
       { name: Invitation.name, schema: InvitationSchema },
       { name: User.name, schema: UserSchema },
     ]),
-    forwardRef(() => TripsModule),
+    forwardRef(() => BoardsModule),
     NotificationsModule,
   ],
   controllers: [ParticipantsController],

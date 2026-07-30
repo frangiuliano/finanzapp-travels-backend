@@ -8,13 +8,20 @@ import {
   IsOptional,
   IsIn,
   IsMongoId,
+  ValidateIf,
 } from 'class-validator';
 import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
 
 export class CreateBudgetDto {
-  @IsNotEmpty({ message: 'El ID del viaje es obligatorio' })
-  @IsMongoId({ message: 'El ID del viaje no es válido' })
-  tripId: string;
+  @ValidateIf((o: CreateBudgetDto) => !o.tripId)
+  @IsNotEmpty({ message: 'boardId o tripId es requerido' })
+  @IsMongoId({ message: 'El ID del tablero no es válido' })
+  boardId?: string;
+
+  @ValidateIf((o: CreateBudgetDto) => !o.boardId)
+  @IsNotEmpty({ message: 'boardId o tripId es requerido' })
+  @IsMongoId({ message: 'El ID del tablero no es válido' })
+  tripId?: string;
 
   @IsNotEmpty({ message: 'El nombre del presupuesto es obligatorio' })
   @IsString({ message: 'El nombre debe ser texto' })
