@@ -56,6 +56,14 @@ On application boot, idempotent backfill:
 db.trips.updateMany({ type: { $exists: false } }, { $set: { type: 'travel' } });
 ```
 
-New boards default to `travel` when `type` is omitted (legacy `/trips` clients).
-Onboarding wizards that create household boards must send `type: "everyday"`
-explicitly.
+## Type immutability
+
+`type` is set at board creation and **cannot be changed** via `PATCH`. Changing
+type after create would leave orphan travel budgets, divisible expenses, or
+pending settlements. Owners should create a new board with the desired type.
+
+## Listing travel budgets on everyday boards
+
+`GET` budgets for an `everyday` board returns an empty list (not 403), so legacy
+clients and the Telegram bot keep working when the active board is everyday.
+Create/update/delete of travel budgets still require `type=travel`.

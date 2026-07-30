@@ -218,6 +218,15 @@ export class ExpensesService {
       );
     }
 
+    if (
+      board.type !== BoardType.TRAVEL &&
+      createExpenseDto.status === ExpenseStatus.PENDING
+    ) {
+      throw new BadRequestException(
+        'El estado pending solo está disponible en tableros travel',
+      );
+    }
+
     const status = createExpenseDto.status || ExpenseStatus.PAID;
 
     const isDivisible = createExpenseDto.isDivisible ?? false;
@@ -493,14 +502,28 @@ export class ExpensesService {
       expense.tripId.toString(),
     );
 
-    if (
-      board.type !== BoardType.TRAVEL &&
-      (updateExpenseDto.isDivisible ||
-        (updateExpenseDto.splits && updateExpenseDto.splits.length > 0))
-    ) {
-      throw new BadRequestException(
-        'Los splits solo están disponibles en tableros travel',
-      );
+    if (board.type !== BoardType.TRAVEL) {
+      if (updateExpenseDto.budgetId) {
+        throw new BadRequestException(
+          'Los presupuestos de viaje solo aplican a tableros travel',
+        );
+      }
+      if (
+        updateExpenseDto.isDivisible ||
+        (updateExpenseDto.splits && updateExpenseDto.splits.length > 0)
+      ) {
+        throw new BadRequestException(
+          'Los splits solo están disponibles en tableros travel',
+        );
+      }
+      if (
+        updateExpenseDto.status !== undefined &&
+        updateExpenseDto.status !== expense.status
+      ) {
+        throw new BadRequestException(
+          'Cambiar el estado de un gasto (settle/pending) solo está disponible en tableros travel',
+        );
+      }
     }
 
     const userParticipant = await this.participantModel.findOne({
@@ -510,7 +533,7 @@ export class ExpensesService {
 
     if (!userParticipant) {
       throw new ForbiddenException(
-        'No tienes acceso a este gasto o el viaje no existe',
+        'No tienes acceso a este gasto o el tablero no existe',
       );
     }
 
@@ -523,7 +546,7 @@ export class ExpensesService {
       }
       if (budget.tripId.toString() !== expense.tripId.toString()) {
         throw new BadRequestException(
-          'El presupuesto no pertenece a este viaje',
+          'El presupuesto no pertenece a este tablero',
         );
       }
     }
@@ -800,9 +823,11 @@ export class ExpensesService {
 
     if (!userParticipant) {
       throw new ForbiddenException(
-        'No tienes acceso a este viaje o el viaje no existe',
+        'No tienes acceso a este tablero o el tablero no existe',
       );
     }
+
+    const isTravel = await this.boardsService.isTravelBoard(tripId);
 
     const expenses = await this.expenseModel
       .find({ tripId: new Types.ObjectId(tripId) })
@@ -874,6 +899,15 @@ export class ExpensesService {
       },
       { paid: 0, pending: 0 },
     );
+
+    if (!isTravel) {
+      return {
+        totalExpenses,
+        totalByBudget,
+        totalByStatus,
+        totalByParticipant: [],
+      };
+    }
 
     const participantMap = new Map<
       string,

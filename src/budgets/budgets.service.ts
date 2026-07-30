@@ -59,8 +59,6 @@ export class BudgetsService {
   }
 
   async findAllByTrip(tripId: string, userId: string): Promise<Budget[]> {
-    await this.boardsService.assertTravelFeatures(tripId);
-
     const participant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(tripId),
       userId: new Types.ObjectId(userId),
@@ -70,6 +68,11 @@ export class BudgetsService {
       throw new ForbiddenException(
         'No tienes acceso a este tablero o el tablero no existe',
       );
+    }
+
+    const isTravel = await this.boardsService.isTravelBoard(tripId);
+    if (!isTravel) {
+      return [];
     }
 
     const budgets = await this.budgetModel
@@ -88,6 +91,8 @@ export class BudgetsService {
       throw new NotFoundException('Presupuesto no encontrado');
     }
 
+    await this.boardsService.assertTravelFeatures(budget.tripId.toString());
+
     const participant = await this.participantModel.findOne({
       tripId: budget.tripId,
       userId: new Types.ObjectId(userId),
@@ -95,7 +100,7 @@ export class BudgetsService {
 
     if (!participant) {
       throw new ForbiddenException(
-        'No tienes acceso a este presupuesto o el viaje no existe',
+        'No tienes acceso a este presupuesto o el tablero no existe',
       );
     }
 
@@ -113,6 +118,8 @@ export class BudgetsService {
       throw new NotFoundException('Presupuesto no encontrado');
     }
 
+    await this.boardsService.assertTravelFeatures(budget.tripId.toString());
+
     const participant = await this.participantModel.findOne({
       tripId: budget.tripId,
       userId: new Types.ObjectId(userId),
@@ -120,7 +127,7 @@ export class BudgetsService {
 
     if (!participant) {
       throw new ForbiddenException(
-        'No tienes acceso a este presupuesto o el viaje no existe',
+        'No tienes acceso a este presupuesto o el tablero no existe',
       );
     }
 
@@ -136,6 +143,8 @@ export class BudgetsService {
       throw new NotFoundException('Presupuesto no encontrado');
     }
 
+    await this.boardsService.assertTravelFeatures(budget.tripId.toString());
+
     const participant = await this.participantModel.findOne({
       tripId: budget.tripId,
       userId: new Types.ObjectId(userId),
@@ -143,7 +152,7 @@ export class BudgetsService {
 
     if (!participant) {
       throw new ForbiddenException(
-        'No tienes acceso a este presupuesto o el viaje no existe',
+        'No tienes acceso a este presupuesto o el tablero no existe',
       );
     }
 

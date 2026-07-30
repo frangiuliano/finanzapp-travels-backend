@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   OnModuleInit,
   Logger,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -149,6 +150,11 @@ export class BoardsService implements OnModuleInit {
     return board;
   }
 
+  async isTravelBoard(boardId: string): Promise<boolean> {
+    const board = await this.findByIdOrFail(boardId);
+    return board.type === BoardType.TRAVEL;
+  }
+
   async update(
     id: string,
     updateBoardDto: UpdateBoardDto,
@@ -175,7 +181,18 @@ export class BoardsService implements OnModuleInit {
       throw new NotFoundException('Tablero no encontrado');
     }
 
-    Object.assign(board, updateBoardDto);
+    if (
+      updateBoardDto.type !== undefined &&
+      updateBoardDto.type !== (board.type ?? BoardType.TRAVEL)
+    ) {
+      throw new BadRequestException(
+        'No se puede cambiar el tipo de tablero después de crearlo. Creá un tablero nuevo con el tipo deseado.',
+      );
+    }
+
+    const { type: _type, ...safeUpdate } = updateBoardDto;
+    void _type;
+    Object.assign(board, safeUpdate);
     const updatedBoard = await board.save();
 
     return updatedBoard.populate('createdBy', 'firstName lastName email');
