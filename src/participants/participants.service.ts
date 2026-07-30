@@ -18,11 +18,12 @@ import {
   InvitationDocument,
   InvitationStatus,
 } from './schemas/invitation.schema';
-import { Trip, TripDocument } from '../trips/trip.schema';
+import { Board, BoardDocument } from '../trips/board.schema';
 import { User, UserDocument } from '../users/user.schema';
 import { NotificationsService } from '../notifications/notifications.service';
 import { InviteParticipantDto, AddGuestParticipantDto } from './dto';
 import { InvitationInfo, AcceptInvitationResult } from './interfaces';
+import { resolveBoardId } from '../common/utils/resolve-board-id';
 
 export { InvitationInfo, AcceptInvitationResult };
 
@@ -35,19 +36,19 @@ export class ParticipantsService {
     private participantModel: Model<ParticipantDocument>,
     @InjectModel(Invitation.name)
     private invitationModel: Model<InvitationDocument>,
-    @InjectModel(Trip.name)
-    private tripModel: Model<TripDocument>,
+    @InjectModel(Board.name)
+    private boardModel: Model<BoardDocument>,
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
     private notificationsService: NotificationsService,
   ) {}
 
-  private async ensureTripExists(tripId: string): Promise<TripDocument> {
-    const trip = await this.tripModel.findById(tripId);
-    if (!trip) {
-      throw new NotFoundException('Viaje no encontrado');
+  private async ensureBoardExists(boardId: string): Promise<BoardDocument> {
+    const board = await this.boardModel.findById(boardId);
+    if (!board) {
+      throw new NotFoundException('Tablero no encontrado');
     }
-    return trip;
+    return board;
   }
 
   private async ensureOwnerAccess(
@@ -151,7 +152,7 @@ export class ParticipantsService {
     }
 
     const inviter = await this.userModel.findById(requestingUserId);
-    const trip = await this.tripModel.findById(tripId);
+    const trip = await this.boardModel.findById(tripId);
 
     if (!trip) {
       throw new NotFoundException('Viaje no encontrado');
@@ -176,10 +177,14 @@ export class ParticipantsService {
     inviteDto: InviteParticipantDto,
     invitedByUserId: string,
   ): Promise<Invitation> {
-    const { tripId, email } = inviteDto;
+    const tripId = resolveBoardId(inviteDto);
+    if (!tripId) {
+      throw new BadRequestException('boardId o tripId es requerido');
+    }
+    const { email } = inviteDto;
     const normalizedEmail = email.toLowerCase().trim();
 
-    await this.ensureTripExists(tripId);
+    await this.ensureBoardExists(tripId);
     await this.ensureOwnerAccess(tripId, invitedByUserId);
     await this.checkExistingUserAndParticipant(tripId, email);
     await this.checkPendingInvitation(tripId, email);
@@ -214,7 +219,7 @@ export class ParticipantsService {
       throw new BadRequestException('Esta invitación ha expirado');
     }
 
-    const trip = await this.tripModel
+    const trip = await this.boardModel
       .findById(invitation.tripId)
       .select('name description')
       .lean();
@@ -451,13 +456,18 @@ export class ParticipantsService {
     dto: AddGuestParticipantDto,
     requestingUserId: string,
   ): Promise<ParticipantDocument> {
-    await this.ensureParticipantAccess(dto.tripId, requestingUserId);
-    const trip = await this.ensureTripExists(dto.tripId);
+    const tripId = resolveBoardId(dto);
+    if (!tripId) {
+      throw new BadRequestException('boardId o tripId es requerido');
+    }
+
+    await this.ensureParticipantAccess(tripId, requestingUserId);
+    const trip = await this.ensureBoardExists(tripId);
 
     if (dto.guestEmail) {
       const normalizedEmail = dto.guestEmail.toLowerCase().trim();
       const existingGuest = await this.participantModel.findOne({
-        tripId: new Types.ObjectId(dto.tripId),
+        tripId: new Types.ObjectId(tripId),
         guestEmail: normalizedEmail,
         userId: { $exists: false },
       });
@@ -468,11 +478,11 @@ export class ParticipantsService {
         );
       }
 
-      await this.checkExistingUserAndParticipant(dto.tripId, normalizedEmail);
+      await this.checkExistingUserAndParticipant(tripId, normalizedEmail);
     }
 
     const guest = await this.participantModel.create({
-      tripId: new Types.ObjectId(dto.tripId),
+      tripId: new Types.ObjectId(tripId),
       guestName: dto.guestName,
       guestEmail: dto.guestEmail?.toLowerCase().trim(),
       role: ParticipantRole.MEMBER,
@@ -482,14 +492,14 @@ export class ParticipantsService {
       const normalizedEmail = dto.guestEmail.toLowerCase().trim();
 
       const existingInvitation = await this.invitationModel.findOne({
-        tripId: new Types.ObjectId(dto.tripId),
+        tripId: new Types.ObjectId(tripId),
         email: normalizedEmail,
         status: InvitationStatus.PENDING,
       });
 
       if (!existingInvitation) {
         await this.createAndSendInvitation(
-          new Types.ObjectId(dto.tripId),
+          new Types.ObjectId(tripId),
           normalizedEmail,
           requestingUserId,
           guest,
@@ -502,7 +512,7 @@ export class ParticipantsService {
     }
 
     this.logger.log(
-      `Guest añadido: ${dto.guestName} al viaje ${trip.name} (${dto.tripId})`,
+      `Guest añadido: ${dto.guestName} al tablero ${trip.name} (${tripId})`,
     );
 
     return guest;

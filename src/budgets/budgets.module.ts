@@ -8,6 +8,7 @@ import {
   Participant,
   ParticipantSchema,
 } from '../participants/schemas/participant.schema';
+import { BoardsModule } from '../trips/trips.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import {
       { name: Participant.name, schema: ParticipantSchema },
     ]),
     forwardRef(() => ParticipantsModule),
+    forwardRef(() => BoardsModule),
   ],
   controllers: [BudgetsController],
   providers: [BudgetsService],

@@ -13,7 +13,7 @@ export class Card {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'Trip', required: false })
+  @Prop({ type: Types.ObjectId, ref: 'Board', required: false })
   tripId?: Types.ObjectId;
 
   @Prop({ required: true, maxlength: 100 })

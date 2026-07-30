@@ -32,7 +32,7 @@ export class BotUpdate {
   })
   state: ConversationState;
 
-  @Prop({ type: Types.ObjectId, ref: 'Trip' })
+  @Prop({ type: Types.ObjectId, ref: 'Board' })
   currentTripId?: Types.ObjectId;
 
   @Prop({ type: Object })

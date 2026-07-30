@@ -8,7 +8,7 @@ export enum ParticipantRole {
 
 @Schema({ timestamps: true })
 export class Participant {
-  @Prop({ type: Types.ObjectId, ref: 'Trip', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'Board', required: true })
   tripId: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: false })

@@ -24,7 +24,7 @@ export interface ExpenseSplit {
 
 @Schema({ timestamps: true })
 export class Expense {
-  @Prop({ type: Types.ObjectId, ref: 'Trip', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'Board', required: true })
   tripId: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Budget', required: false })
