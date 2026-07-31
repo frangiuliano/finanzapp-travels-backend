@@ -14,6 +14,7 @@ import {
 import { Budget } from '../budgets/budget.schema';
 import { Invitation } from '../participants/schemas/invitation.schema';
 import { Types } from 'mongoose';
+import { CategoriesService } from '../categories/categories.service';
 
 describe('BoardsService', () => {
   let service: BoardsService;
@@ -44,6 +45,11 @@ describe('BoardsService', () => {
     deleteMany: jest.fn(),
   };
 
+  const categoriesService = {
+    seedDefaults: jest.fn().mockResolvedValue([]),
+    deleteByBoard: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -57,6 +63,7 @@ describe('BoardsService', () => {
         },
         { provide: getModelToken(Budget.name), useValue: budgetModel },
         { provide: getModelToken(Invitation.name), useValue: invitationModel },
+        { provide: CategoriesService, useValue: categoriesService },
       ],
     }).compile();
 
@@ -102,6 +109,7 @@ describe('BoardsService', () => {
             provide: getModelToken(Invitation.name),
             useValue: invitationModel,
           },
+          { provide: CategoriesService, useValue: categoriesService },
         ],
       }).compile();
 
@@ -118,6 +126,9 @@ describe('BoardsService', () => {
         expect.objectContaining({
           role: ParticipantRole.OWNER,
         }),
+      );
+      expect(categoriesService.seedDefaults).toHaveBeenCalledWith(
+        boardId.toString(),
       );
       expect(result).toEqual(saved);
     });
@@ -147,6 +158,7 @@ describe('BoardsService', () => {
             provide: getModelToken(Invitation.name),
             useValue: invitationModel,
           },
+          { provide: CategoriesService, useValue: categoriesService },
         ],
       }).compile();
 

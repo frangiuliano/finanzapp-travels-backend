@@ -12,6 +12,7 @@ import { BudgetsModule } from './budgets/budgets.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { BotModule } from './bot/bot.module';
 import { CardsModule } from './cards/cards.module';
+import { CategoriesModule } from './categories/categories.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { CardsModule } from './cards/cards.module';
     ExpensesModule,
     BotModule,
     CardsModule,
+    CategoriesModule,
   ],
   controllers: [AppController],
   providers: [
