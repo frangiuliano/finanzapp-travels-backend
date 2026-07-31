@@ -5,6 +5,8 @@ import {
   OnModuleInit,
   Logger,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -22,6 +24,7 @@ import {
 import { CreateBoardDto } from './dto/create-board.dto';
 import { UpdateBoardDto } from './dto/update-board.dto';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
+import { CategoriesService } from '../categories/categories.service';
 
 @Injectable()
 export class BoardsService implements OnModuleInit {
@@ -34,6 +37,8 @@ export class BoardsService implements OnModuleInit {
     @InjectModel(Budget.name) private budgetModel: Model<BudgetDocument>,
     @InjectModel(Invitation.name)
     private invitationModel: Model<InvitationDocument>,
+    @Inject(forwardRef(() => CategoriesService))
+    private categoriesService: CategoriesService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -63,6 +68,8 @@ export class BoardsService implements OnModuleInit {
       userId: new Types.ObjectId(userId),
       role: ParticipantRole.OWNER,
     });
+
+    await this.categoriesService.seedDefaults(savedBoard._id.toString());
 
     return savedBoard;
   }
@@ -223,6 +230,7 @@ export class BoardsService implements OnModuleInit {
     const boardId = new Types.ObjectId(id);
 
     await this.budgetModel.deleteMany({ tripId: boardId });
+    await this.categoriesService.deleteByBoard(id);
     await this.participantModel.deleteMany({ tripId: boardId });
     await this.invitationModel.deleteMany({ tripId: boardId });
     await this.boardModel.findByIdAndDelete(id);

@@ -9,6 +9,7 @@ import {
   Invitation,
   InvitationSchema,
 } from '../participants/schemas/invitation.schema';
+import { CategoriesModule } from '../categories/categories.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import {
       { name: Invitation.name, schema: InvitationSchema },
     ]),
     forwardRef(() => ParticipantsModule),
+    forwardRef(() => CategoriesModule),
   ],
   controllers: [BoardsController],
   providers: [BoardsService],
