@@ -15,6 +15,7 @@ import { Budget } from '../budgets/budget.schema';
 import { Invitation } from '../participants/schemas/invitation.schema';
 import { Types } from 'mongoose';
 import { CategoriesService } from '../categories/categories.service';
+import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 
 describe('BoardsService', () => {
   let service: BoardsService;
@@ -50,6 +51,10 @@ describe('BoardsService', () => {
     deleteByBoard: jest.fn().mockResolvedValue(undefined),
   };
 
+  const paymentMethodsService = {
+    deleteByBoard: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -64,6 +69,7 @@ describe('BoardsService', () => {
         { provide: getModelToken(Budget.name), useValue: budgetModel },
         { provide: getModelToken(Invitation.name), useValue: invitationModel },
         { provide: CategoriesService, useValue: categoriesService },
+        { provide: PaymentMethodsService, useValue: paymentMethodsService },
       ],
     }).compile();
 
@@ -110,6 +116,7 @@ describe('BoardsService', () => {
             useValue: invitationModel,
           },
           { provide: CategoriesService, useValue: categoriesService },
+          { provide: PaymentMethodsService, useValue: paymentMethodsService },
         ],
       }).compile();
 
@@ -159,6 +166,7 @@ describe('BoardsService', () => {
             useValue: invitationModel,
           },
           { provide: CategoriesService, useValue: categoriesService },
+          { provide: PaymentMethodsService, useValue: paymentMethodsService },
         ],
       }).compile();
 
