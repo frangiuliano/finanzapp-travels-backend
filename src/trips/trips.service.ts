@@ -25,6 +25,7 @@ import { CreateBoardDto } from './dto/create-board.dto';
 import { UpdateBoardDto } from './dto/update-board.dto';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 import { CategoriesService } from '../categories/categories.service';
+import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 
 @Injectable()
 export class BoardsService implements OnModuleInit {
@@ -39,6 +40,8 @@ export class BoardsService implements OnModuleInit {
     private invitationModel: Model<InvitationDocument>,
     @Inject(forwardRef(() => CategoriesService))
     private categoriesService: CategoriesService,
+    @Inject(forwardRef(() => PaymentMethodsService))
+    private paymentMethodsService: PaymentMethodsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -231,6 +234,7 @@ export class BoardsService implements OnModuleInit {
 
     await this.budgetModel.deleteMany({ tripId: boardId });
     await this.categoriesService.deleteByBoard(id);
+    await this.paymentMethodsService.deleteByBoard(id);
     await this.participantModel.deleteMany({ tripId: boardId });
     await this.invitationModel.deleteMany({ tripId: boardId });
     await this.boardModel.findByIdAndDelete(id);

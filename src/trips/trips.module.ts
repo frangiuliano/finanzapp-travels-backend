@@ -10,6 +10,7 @@ import {
   InvitationSchema,
 } from '../participants/schemas/invitation.schema';
 import { CategoriesModule } from '../categories/categories.module';
+import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { CategoriesModule } from '../categories/categories.module';
     ]),
     forwardRef(() => ParticipantsModule),
     forwardRef(() => CategoriesModule),
+    forwardRef(() => PaymentMethodsModule),
   ],
   controllers: [BoardsController],
   providers: [BoardsService],

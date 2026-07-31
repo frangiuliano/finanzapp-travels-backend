@@ -67,7 +67,7 @@ export class Expense {
   })
   paymentMethod: PaymentMethod;
 
-  @Prop({ type: Types.ObjectId, ref: 'Card', required: false })
+  @Prop({ type: Types.ObjectId, ref: 'PaymentMethod', required: false })
   cardId?: Types.ObjectId;
 
   @Prop({ type: Boolean, default: false, required: true })

@@ -1,15 +1,10 @@
-import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
+import { Module, forwardRef } from '@nestjs/common';
 import { CardsService } from './cards.service';
 import { CardsController } from './cards.controller';
-import { Card, CardSchema } from './card.schema';
-import { ParticipantsModule } from '../participants/participants.module';
+import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: Card.name, schema: CardSchema }]),
-    ParticipantsModule,
-  ],
+  imports: [forwardRef(() => PaymentMethodsModule)],
   controllers: [CardsController],
   providers: [CardsService],
   exports: [CardsService],
