@@ -53,19 +53,10 @@ export class CategoriesService {
     await this.participantsService.ensureParticipantAccess(boardId, userId);
 
     const normalizedName = createCategoryDto.name.trim();
-    const existing = await this.categoryModel.findOne({
-      tripId: new Types.ObjectId(boardId),
-      name: {
-        $regex: new RegExp(`^${this.escapeRegex(normalizedName)}$`, 'i'),
-      },
-      isActive: true,
-    });
-
-    if (existing) {
-      throw new BadRequestException(
-        'Ya existe una categoría activa con ese nombre en este tablero',
-      );
-    }
+    await this.assertNoActiveDuplicateName(
+      new Types.ObjectId(boardId),
+      normalizedName,
+    );
 
     const category = new this.categoryModel({
       tripId: new Types.ObjectId(boardId),
@@ -133,21 +124,11 @@ export class CategoriesService {
 
     if (updateCategoryDto.name !== undefined) {
       const normalizedName = updateCategoryDto.name.trim();
-      const duplicate = await this.categoryModel.findOne({
-        _id: { $ne: category._id },
-        tripId: category.tripId,
-        name: {
-          $regex: new RegExp(`^${this.escapeRegex(normalizedName)}$`, 'i'),
-        },
-        isActive: true,
-      });
-
-      if (duplicate) {
-        throw new BadRequestException(
-          'Ya existe una categoría activa con ese nombre en este tablero',
-        );
-      }
-
+      await this.assertNoActiveDuplicateName(
+        category.tripId,
+        normalizedName,
+        category._id,
+      );
       category.name = normalizedName;
     }
 
@@ -158,6 +139,13 @@ export class CategoriesService {
       category.color = updateCategoryDto.color;
     }
     if (updateCategoryDto.isActive !== undefined) {
+      if (updateCategoryDto.isActive && !category.isActive) {
+        await this.assertNoActiveDuplicateName(
+          category.tripId,
+          category.name,
+          category._id,
+        );
+      }
       category.isActive = updateCategoryDto.isActive;
     }
 
@@ -172,6 +160,32 @@ export class CategoriesService {
     await this.categoryModel.deleteMany({
       tripId: new Types.ObjectId(boardId),
     });
+  }
+
+  private async assertNoActiveDuplicateName(
+    tripId: Types.ObjectId,
+    name: string,
+    excludeId?: Types.ObjectId,
+  ): Promise<void> {
+    const filter: Record<string, unknown> = {
+      tripId,
+      name: {
+        $regex: new RegExp(`^${this.escapeRegex(name.trim())}$`, 'i'),
+      },
+      isActive: true,
+    };
+
+    if (excludeId) {
+      filter._id = { $ne: excludeId };
+    }
+
+    const duplicate = await this.categoryModel.findOne(filter);
+
+    if (duplicate) {
+      throw new BadRequestException(
+        'Ya existe una categoría activa con ese nombre en este tablero',
+      );
+    }
   }
 
   private escapeRegex(value: string): string {

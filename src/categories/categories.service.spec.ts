@@ -143,6 +143,36 @@ describe('CategoriesService', () => {
     });
   });
 
+  describe('update reactivation', () => {
+    it('should reject reactivating when another active category has the same name', async () => {
+      const archivedCategoryId = new Types.ObjectId();
+      const categoryDoc = {
+        _id: archivedCategoryId,
+        tripId: boardId,
+        name: 'Comida',
+        isActive: false,
+        save: jest.fn(),
+      };
+      categoryModel.findById.mockResolvedValue(categoryDoc);
+      participantsService.ensureParticipantAccess.mockResolvedValue(undefined);
+      categoryModel.findOne.mockResolvedValue({
+        _id: categoryId,
+        name: 'Comida',
+        isActive: true,
+      });
+
+      await expect(
+        service.update(
+          archivedCategoryId.toString(),
+          { isActive: true },
+          userId,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(categoryDoc.save).not.toHaveBeenCalled();
+    });
+  });
+
   describe('findOne', () => {
     it('should throw when category does not exist', async () => {
       categoryModel.findById.mockReturnValue({
