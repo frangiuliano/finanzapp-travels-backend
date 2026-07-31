@@ -8,6 +8,7 @@ import {
   PaymentMethodKind,
   PaymentMethodOwnerType,
 } from '../payment-methods/payment-method.schema';
+import { resolveCardTypeFromBrand } from '../common/utils/card-type-from-brand';
 
 @Injectable()
 export class CardsService {
@@ -96,23 +97,21 @@ export class CardsService {
   }
 
   private toLegacyCard(paymentMethod: PaymentMethod): Card {
-    const brand = paymentMethod.brand;
-    const type =
-      brand === CardType.VISA ||
-      brand === CardType.MASTERCARD ||
-      brand === CardType.AMEX ||
-      brand === CardType.OTHER
-        ? brand
-        : CardType.OTHER;
+    const type = resolveCardTypeFromBrand(paymentMethod.brand);
 
-    return {
+    const legacy: Record<string, unknown> = {
       ...paymentMethod,
-      userId: paymentMethod.userId!,
-      tripId: paymentMethod.tripId,
       name: paymentMethod.name,
       lastFourDigits: paymentMethod.lastFourDigits ?? '0000',
       type,
       isActive: paymentMethod.isActive,
-    } as Card;
+      tripId: paymentMethod.tripId,
+    };
+
+    if (paymentMethod.userId) {
+      legacy.userId = paymentMethod.userId;
+    }
+
+    return legacy as unknown as Card;
   }
 }

@@ -24,6 +24,7 @@ import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
+import { resolveCardTypeFromBrand } from '../common/utils/card-type-from-brand';
 import { BoardsService } from '../trips/trips.service';
 
 interface PopulatedUser {
@@ -49,7 +50,8 @@ interface PopulatedCard {
   _id: Types.ObjectId;
   name: string;
   lastFourDigits: string;
-  type: string;
+  type?: string;
+  brand?: string;
   userId?: PopulatedUser | Types.ObjectId;
 }
 
@@ -370,7 +372,7 @@ export class ExpensesService {
       .populate('budgetId', '_id name')
       .populate({
         path: 'cardId',
-        select: '_id name lastFourDigits type',
+        select: '_id name lastFourDigits brand type userId',
         populate: {
           path: 'userId',
           select: 'firstName lastName',
@@ -426,7 +428,7 @@ export class ExpensesService {
       .populate('budgetId', '_id name')
       .populate({
         path: 'cardId',
-        select: '_id name lastFourDigits type',
+        select: '_id name lastFourDigits brand type userId',
         populate: {
           path: 'userId',
           select: 'firstName lastName',
@@ -461,7 +463,7 @@ export class ExpensesService {
       .populate('budgetId', '_id name')
       .populate({
         path: 'cardId',
-        select: '_id name lastFourDigits type',
+        select: '_id name lastFourDigits brand type userId',
         populate: {
           path: 'userId',
           select: 'firstName lastName',
@@ -756,7 +758,7 @@ export class ExpensesService {
       .populate('budgetId', '_id name')
       .populate({
         path: 'cardId',
-        select: '_id name lastFourDigits type',
+        select: '_id name lastFourDigits brand type userId',
         populate: {
           path: 'userId',
           select: 'firstName lastName',
@@ -1277,7 +1279,7 @@ export class ExpensesService {
       .populate('budgetId', '_id name')
       .populate({
         path: 'cardId',
-        select: '_id name lastFourDigits type',
+        select: '_id name lastFourDigits brand type userId',
         populate: {
           path: 'userId',
           select: 'firstName lastName',
@@ -1392,7 +1394,7 @@ export class ExpensesService {
           _id: objectIdToString(card._id),
           name: card.name,
           lastFourDigits: card.lastFourDigits,
-          type: card.type,
+          type: resolveCardTypeFromBrand(card.brand, card.type),
         };
 
         if (card.userId) {
