@@ -294,6 +294,21 @@ export class ExpensesService implements OnModuleInit {
     createExpenseDto: CreateExpenseDto,
     userId: string,
   ): Promise<Expense> {
+    const clientRequestId = createExpenseDto.clientRequestId;
+
+    if (clientRequestId) {
+      const existing = await this.findExistingByClientRequestId(
+        clientRequestId,
+        userId,
+      );
+      if (existing) {
+        this.logger.log(
+          `Idempotent replay for clientRequestId=${clientRequestId} (user ${userId})`,
+        );
+        return existing;
+      }
+    }
+
     const boardId = resolveBoardId(createExpenseDto);
     if (!boardId) {
       throw new BadRequestException('boardId o tripId es requerido');
@@ -520,10 +535,25 @@ export class ExpensesService implements OnModuleInit {
       splits: processedSplits,
       status,
       createdBy: new Types.ObjectId(userId),
+      clientRequestId,
       expenseDate,
     });
 
-    const savedExpense = await expense.save();
+    let savedExpense: ExpenseDocument;
+    try {
+      savedExpense = await expense.save();
+    } catch (error) {
+      if (clientRequestId && this.isDuplicateKeyError(error)) {
+        const existing = await this.findExistingByClientRequestId(
+          clientRequestId,
+          userId,
+        );
+        if (existing) {
+          return existing;
+        }
+      }
+      throw error;
+    }
 
     if (createExpenseDto.budgetId) {
       const amountForBudget = this.getBudgetAmountForExpense(
@@ -1795,5 +1825,33 @@ export class ExpensesService implements OnModuleInit {
     await this.budgetModel.findByIdAndUpdate(budgetId, {
       $inc: { spent: amountChange },
     });
+  }
+
+  private async findExistingByClientRequestId(
+    clientRequestId: string,
+    userId: string,
+  ): Promise<Expense | null> {
+    const populatedExpense = await this.expenseModel
+      .findOne({
+        clientRequestId,
+        createdBy: new Types.ObjectId(userId),
+      })
+      .populate(EXPENSE_RELATION_POPULATES)
+      .lean();
+
+    if (!populatedExpense) {
+      return null;
+    }
+
+    return this.transformExpense(populatedExpense);
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: number }).code === 11000
+    );
   }
 }

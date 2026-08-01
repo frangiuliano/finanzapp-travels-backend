@@ -10,6 +10,7 @@ import {
   HttpStatus,
   UseGuards,
   Query,
+  Headers,
   BadRequestException,
 } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
@@ -29,7 +30,12 @@ export class ExpensesController {
   async create(
     @Body() createExpenseDto: CreateExpenseDto,
     @GetUser('_id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
+    if (idempotencyKey && !createExpenseDto.clientRequestId) {
+      createExpenseDto.clientRequestId = idempotencyKey;
+    }
+
     const expense = await this.expensesService.create(createExpenseDto, userId);
     return {
       message: 'Gasto creado exitosamente',
