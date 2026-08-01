@@ -88,6 +88,7 @@ describe('ExpensesService idempotency', () => {
       lean: jest.fn().mockResolvedValue(existingLean),
     };
     expenseModel.findOne.mockReturnValue(chain);
+    participantModel.findOne.mockResolvedValue({ _id: participantId });
 
     const result = await service.create(
       {

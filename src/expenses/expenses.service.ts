@@ -302,6 +302,10 @@ export class ExpensesService implements OnModuleInit {
         userId,
       );
       if (existing) {
+        await this.assertUserIsBoardParticipant(
+          this.resolveBoardIdFromExpense(existing),
+          userId,
+        );
         this.logger.log(
           `Idempotent replay for clientRequestId=${clientRequestId} (user ${userId})`,
         );
@@ -549,6 +553,10 @@ export class ExpensesService implements OnModuleInit {
           userId,
         );
         if (existing) {
+          await this.assertUserIsBoardParticipant(
+            this.resolveBoardIdFromExpense(existing),
+            userId,
+          );
           return existing;
         }
       }
@@ -674,6 +682,22 @@ export class ExpensesService implements OnModuleInit {
     }
 
     return this.transformExpense(expense);
+  }
+
+  private async assertUserIsBoardParticipant(
+    boardId: string,
+    userId: string,
+  ): Promise<void> {
+    const userParticipant = await this.participantModel.findOne({
+      tripId: new Types.ObjectId(boardId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (!userParticipant) {
+      throw new ForbiddenException(
+        'No tienes acceso a este tablero o el tablero no existe',
+      );
+    }
   }
 
   async update(
@@ -1853,5 +1877,21 @@ export class ExpensesService implements OnModuleInit {
       'code' in error &&
       (error as { code?: number }).code === 11000
     );
+  }
+
+  private resolveBoardIdFromExpense(expense: Expense): string {
+    const record = expense as unknown as {
+      boardId?: string;
+      tripId?: string | Types.ObjectId;
+    };
+    if (record.boardId) {
+      return record.boardId;
+    }
+    if (!record.tripId) {
+      return '';
+    }
+    return typeof record.tripId === 'string'
+      ? record.tripId
+      : record.tripId.toString();
   }
 }

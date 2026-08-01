@@ -13,6 +13,7 @@ import {
   Headers,
   BadRequestException,
 } from '@nestjs/common';
+import { isUUID } from 'class-validator';
 import { ExpensesService } from './expenses.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
@@ -32,8 +33,15 @@ export class ExpensesController {
     @GetUser('_id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    if (idempotencyKey && !createExpenseDto.clientRequestId) {
-      createExpenseDto.clientRequestId = idempotencyKey;
+    if (idempotencyKey) {
+      if (!isUUID(idempotencyKey, '4')) {
+        throw new BadRequestException(
+          'Idempotency-Key debe ser un UUID v4 válido',
+        );
+      }
+      if (!createExpenseDto.clientRequestId) {
+        createExpenseDto.clientRequestId = idempotencyKey;
+      }
     }
 
     const expense = await this.expensesService.create(createExpenseDto, userId);
