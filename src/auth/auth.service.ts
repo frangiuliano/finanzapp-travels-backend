@@ -14,6 +14,8 @@ import { User, UserDocument } from '../users/user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdateUserPreferencesDto } from '../users/dto/update-user-preferences.dto';
+import { UserPreferencesService } from '../users/user-preferences.service';
 import {
   JwtPayload,
   JwtSignPayload,
@@ -30,6 +32,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private notificationsService: NotificationsService,
+    private userPreferencesService: UserPreferencesService,
   ) {}
 
   private async generateUsernameForUser(user: UserDocument): Promise<string> {
@@ -459,6 +462,7 @@ export class AuthService {
     lastName: string;
     emailVerified: boolean;
     lastLogin?: Date;
+    activeBoardId: string | null;
   }> {
     const user = await this.userModel.findById(userId).exec();
 
@@ -479,7 +483,18 @@ export class AuthService {
       lastName: user.lastName,
       emailVerified: user.emailVerified,
       lastLogin: user.lastLogin,
+      activeBoardId: user.activeBoardId?.toString() ?? null,
     };
+  }
+
+  async updatePreferences(
+    userId: string,
+    dto: UpdateUserPreferencesDto,
+  ): Promise<{ activeBoardId: string | null }> {
+    return this.userPreferencesService.updatePreferences(
+      userId,
+      dto.activeBoardId,
+    );
   }
 
   private sanitizeUser(user: UserDocument) {

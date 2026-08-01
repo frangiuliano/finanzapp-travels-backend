@@ -31,12 +31,12 @@ export class UserLinkingService {
     if (parts.length === 1) {
       await this.telegramClient.sendMessage(
         telegramUserId,
-        '👋 ¡Hola! Soy el bot de FinanzApp Travels.\n\n' +
+        '👋 ¡Hola! Soy el bot de FinanzApp.\n\n' +
           'Para vincular tu cuenta:\n' +
-          '1. Inicia sesión en la web\n' +
+          '1. Iniciá sesión en la web\n' +
           '2. Ve a Configuración → Bot de Telegram\n' +
-          '3. Copia el token que se genera\n' +
-          '4. Envíame: /start <token>\n\n' +
+          '3. Copiá el token que se genera\n' +
+          '4. Enviame: /start <token>\n\n' +
           'Ejemplo: /start abc123xyz',
       );
       return;
@@ -116,8 +116,10 @@ export class UserLinkingService {
     await this.telegramClient.sendMessage(
       telegramUserId,
       '✅ ¡Cuenta vinculada exitosamente!\n\n' +
-        'Ahora puedes cargar gastos enviándome mensajes informales.\n' +
-        'Ejemplo: "Cena 120 usd compartido"',
+        '1. Elegí tu tablero activo con /board\n' +
+        '2. Cargá gastos con mensajes informales\n\n' +
+        'Ejemplo everyday: "Super 15000"\n' +
+        'Ejemplo viaje: "Cena 120 usd compartido"',
     );
   }
 

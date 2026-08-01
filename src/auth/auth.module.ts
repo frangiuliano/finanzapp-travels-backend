@@ -10,6 +10,7 @@ import { User, UserSchema } from '../users/user.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { APP_GUARD } from '@nestjs/core';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     }),
     MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
     NotificationsModule,
+    UsersModule,
   ],
   controllers: [AuthController],
   providers: [

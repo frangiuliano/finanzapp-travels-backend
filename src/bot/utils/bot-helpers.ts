@@ -29,3 +29,14 @@ export function getCardId(card: unknown): string {
   }
   return '';
 }
+
+export function getDocumentId(doc: unknown): string {
+  const value = doc as { _id?: Types.ObjectId | string; id?: string };
+  if (value._id) {
+    return typeof value._id === 'string' ? value._id : value._id.toString();
+  }
+  if (value.id) {
+    return value.id;
+  }
+  return '';
+}

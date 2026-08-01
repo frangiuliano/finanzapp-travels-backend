@@ -26,7 +26,11 @@ import { PopulatedParticipant, PopulatedBudget } from './types/populated.types';
 import { TelegramClientService } from './telegram/telegram-client.service';
 import { UserLinkingService } from './linking/user-linking.service';
 import { BotUpdateRepository } from './repositories/bot-update.repository';
-import { getCardId } from './utils/bot-helpers';
+import { getCardId, getDocumentId } from './utils/bot-helpers';
+import { UserPreferencesService } from '../users/user-preferences.service';
+import { BoardType } from '../trips/board.schema';
+import { BoardCommandHandler } from './handlers/board-command.handler';
+import { EverydayExpenseHandler } from './handlers/everyday-expense.handler';
 
 @Injectable()
 export class BotService {
@@ -46,6 +50,9 @@ export class BotService {
     private telegramClient: TelegramClientService,
     private userLinkingService: UserLinkingService,
     private botUpdateRepository: BotUpdateRepository,
+    private userPreferencesService: UserPreferencesService,
+    private boardCommandHandler: BoardCommandHandler,
+    private everydayExpenseHandler: EverydayExpenseHandler,
   ) {}
 
   async handleUpdate(update: TelegramUpdate): Promise<void> {
@@ -114,6 +121,22 @@ export class BotService {
       return;
     }
 
+    if (text.startsWith('/board')) {
+      const botUpdate =
+        await this.botUpdateRepository.getOrCreateBotUpdate(telegramUserId);
+
+      if (!botUpdate.userId) {
+        await this.telegramClient.sendMessage(
+          telegramUserId,
+          '⚠️ Primero debes vincular tu cuenta. Ve a la web y genera un token de vinculación, luego usa /start <token>',
+        );
+        return;
+      }
+
+      await this.boardCommandHandler.handle(botUpdate, text, telegramUserId);
+      return;
+    }
+
     this.logger.log('Obteniendo botUpdate...');
     const botUpdate =
       await this.botUpdateRepository.getOrCreateBotUpdate(telegramUserId);
@@ -162,6 +185,20 @@ export class BotService {
       case ConversationState.ASKING_TRIP:
         this.logger.log('Estado ASKING_TRIP, llamando handleTripSelection...');
         await this.handleTripSelection(botUpdate, text, telegramUserId);
+        break;
+      case ConversationState.ASKING_CATEGORY:
+        await this.handleEverydayCategorySelection(
+          botUpdate,
+          text,
+          telegramUserId,
+        );
+        break;
+      case ConversationState.ASKING_EVERYDAY_PAYMENT:
+        await this.handleEverydayPaymentSelection(
+          botUpdate,
+          text,
+          telegramUserId,
+        );
         break;
       case ConversationState.ASKING_BUCKET:
         this.logger.log(
@@ -250,12 +287,41 @@ export class BotService {
       return;
     }
 
-    const trips = await this.tripsService.findAll(botUpdate.userId.toString());
+    const userId = botUpdate.userId.toString();
+    const activeBoard =
+      await this.userPreferencesService.resolveActiveBoard(userId);
+
+    if (!activeBoard) {
+      await this.telegramClient.sendMessage(
+        telegramUserId,
+        '⚠️ No tenés un tablero activo.\n\n' +
+          'Usá /board para ver tus tableros y elegir uno.\n' +
+          'Después podés cargar gastos con un mensaje como "Super 15000".',
+      );
+      return;
+    }
+
+    const boardId = getDocumentId(activeBoard);
+    const boardType = activeBoard.type ?? BoardType.TRAVEL;
+    botUpdate.currentTripId = new Types.ObjectId(boardId);
+    await botUpdate.save();
+
+    if (boardType === BoardType.EVERYDAY) {
+      await this.everydayExpenseHandler.startFromMessage(
+        botUpdate,
+        text,
+        telegramUserId,
+        boardId,
+      );
+      return;
+    }
+
+    const trips = await this.tripsService.findAll(userId);
 
     if (trips.length === 0) {
       await this.telegramClient.sendMessage(
         telegramUserId,
-        '⚠️ No tienes viajes activos. Crea uno desde la web primero.',
+        '⚠️ No tienes tableros de viaje. Creá uno desde la web primero.',
       );
       return;
     }
@@ -348,6 +414,16 @@ export class BotService {
       await botUpdate.save();
 
       await this.continueWithTrip(botUpdate, telegramUserId, tripId);
+      return;
+    }
+
+    // Active travel board is set — skip trip picker when it matches
+    const activeOnList = trips.some((t) => {
+      const trip = t as unknown as { _id: Types.ObjectId };
+      return trip._id.toString() === boardId;
+    });
+    if (activeOnList) {
+      await this.continueWithTrip(botUpdate, telegramUserId, boardId);
       return;
     }
 
@@ -1597,6 +1673,38 @@ export class BotService {
     );
   }
 
+  private async handleEverydayCategorySelection(
+    botUpdate: BotUpdateDocument,
+    text: string,
+    telegramUserId: number,
+  ): Promise<void> {
+    if (!botUpdate.currentTripId) {
+      return;
+    }
+    await this.everydayExpenseHandler.handleCategorySelection(
+      botUpdate,
+      text,
+      telegramUserId,
+      botUpdate.currentTripId.toString(),
+    );
+  }
+
+  private async handleEverydayPaymentSelection(
+    botUpdate: BotUpdateDocument,
+    text: string,
+    telegramUserId: number,
+  ): Promise<void> {
+    if (!botUpdate.currentTripId) {
+      return;
+    }
+    await this.everydayExpenseHandler.handlePaymentSelection(
+      botUpdate,
+      text,
+      telegramUserId,
+      botUpdate.currentTripId.toString(),
+    );
+  }
+
   private async handleCallbackQuery(
     callback: TelegramUpdate['callback_query'],
   ): Promise<void> {
@@ -1624,7 +1732,40 @@ export class BotService {
     }
 
     try {
-      if (data.startsWith('trip:')) {
+      if (data.startsWith('board:')) {
+        const boardId = data.replace('board:', '');
+        await this.boardCommandHandler.handleBoardCallback(
+          botUpdate,
+          boardId,
+          telegramUserId,
+        );
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
+      } else if (data.startsWith('everyday-category:')) {
+        const categoryId = data.replace('everyday-category:', '');
+        await this.everydayExpenseHandler.handleCategoryCallback(
+          botUpdate,
+          categoryId,
+          telegramUserId,
+          botUpdate.currentTripId!.toString(),
+        );
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
+      } else if (data.startsWith('everyday-payment:')) {
+        const paymentMethodId = data.replace('everyday-payment:', '');
+        await this.everydayExpenseHandler.handlePaymentCallback(
+          botUpdate,
+          paymentMethodId,
+          telegramUserId,
+          botUpdate.currentTripId!.toString(),
+        );
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
+      } else if (data === 'everyday-confirm:yes') {
+        await this.everydayExpenseHandler.confirmExpense(
+          botUpdate,
+          telegramUserId,
+          botUpdate.currentTripId!.toString(),
+        );
+        await this.telegramClient.answerCallbackQuery(callbackQueryId);
+      } else if (data.startsWith('trip:')) {
         const tripId = data.replace('trip:', '');
         const updatedBotUpdate = await this.botUpdateModel
           .findById(botUpdate._id)
