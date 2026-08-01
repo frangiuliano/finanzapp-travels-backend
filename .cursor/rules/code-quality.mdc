@@ -1,0 +1,14 @@
+---
+description: Clean code, DRY, light SOLID — apply when writing or reviewing code
+globs: "**/*.{ts,tsx,js,jsx}"
+alwaysApply: false
+---
+
+# Code quality
+
+- Prefer clean, readable, maintainable code over clever shortcuts.
+- Avoid unnecessary comments; comment only non-obvious logic, business rules, or constraints.
+- Reuse existing helpers/modules; extract shared logic instead of copy-paste.
+- Avoid unnecessary duplication.
+- Apply SOLID when it clearly improves the design (e.g. splitting a god service). Do not lecture SOLID on every change.
+- Follow NestJS module/layer conventions in this repo (controller → service → data).
