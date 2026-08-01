@@ -128,6 +128,10 @@ export class Expense {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 
+  /** Client-generated UUID for offline sync idempotency (unique per user). */
+  @Prop({ type: String, required: false, maxlength: 36 })
+  clientRequestId?: string;
+
   @Prop({ type: Date, default: Date.now })
   expenseDate: Date;
 
@@ -154,3 +158,12 @@ ExpenseSchema.index({ expenseDate: -1 });
 ExpenseSchema.index({ cardId: 1 });
 ExpenseSchema.index({ categoryId: 1 });
 ExpenseSchema.index({ paymentMethodId: 1 });
+ExpenseSchema.index(
+  { createdBy: 1, clientRequestId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      clientRequestId: { $exists: true, $type: 'string' },
+    },
+  },
+);

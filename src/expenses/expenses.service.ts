@@ -294,6 +294,25 @@ export class ExpensesService implements OnModuleInit {
     createExpenseDto: CreateExpenseDto,
     userId: string,
   ): Promise<Expense> {
+    const clientRequestId = createExpenseDto.clientRequestId;
+
+    if (clientRequestId) {
+      const existing = await this.findExistingByClientRequestId(
+        clientRequestId,
+        userId,
+      );
+      if (existing) {
+        await this.assertUserIsBoardParticipant(
+          this.resolveBoardIdFromExpense(existing),
+          userId,
+        );
+        this.logger.log(
+          `Idempotent replay for clientRequestId=${clientRequestId} (user ${userId})`,
+        );
+        return existing;
+      }
+    }
+
     const boardId = resolveBoardId(createExpenseDto);
     if (!boardId) {
       throw new BadRequestException('boardId o tripId es requerido');
@@ -520,10 +539,29 @@ export class ExpensesService implements OnModuleInit {
       splits: processedSplits,
       status,
       createdBy: new Types.ObjectId(userId),
+      clientRequestId,
       expenseDate,
     });
 
-    const savedExpense = await expense.save();
+    let savedExpense: ExpenseDocument;
+    try {
+      savedExpense = await expense.save();
+    } catch (error) {
+      if (clientRequestId && this.isDuplicateKeyError(error)) {
+        const existing = await this.findExistingByClientRequestId(
+          clientRequestId,
+          userId,
+        );
+        if (existing) {
+          await this.assertUserIsBoardParticipant(
+            this.resolveBoardIdFromExpense(existing),
+            userId,
+          );
+          return existing;
+        }
+      }
+      throw error;
+    }
 
     if (createExpenseDto.budgetId) {
       const amountForBudget = this.getBudgetAmountForExpense(
@@ -644,6 +682,22 @@ export class ExpensesService implements OnModuleInit {
     }
 
     return this.transformExpense(expense);
+  }
+
+  private async assertUserIsBoardParticipant(
+    boardId: string,
+    userId: string,
+  ): Promise<void> {
+    const userParticipant = await this.participantModel.findOne({
+      tripId: new Types.ObjectId(boardId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (!userParticipant) {
+      throw new ForbiddenException(
+        'No tienes acceso a este tablero o el tablero no existe',
+      );
+    }
   }
 
   async update(
@@ -1795,5 +1849,49 @@ export class ExpensesService implements OnModuleInit {
     await this.budgetModel.findByIdAndUpdate(budgetId, {
       $inc: { spent: amountChange },
     });
+  }
+
+  private async findExistingByClientRequestId(
+    clientRequestId: string,
+    userId: string,
+  ): Promise<Expense | null> {
+    const populatedExpense = await this.expenseModel
+      .findOne({
+        clientRequestId,
+        createdBy: new Types.ObjectId(userId),
+      })
+      .populate(EXPENSE_RELATION_POPULATES)
+      .lean();
+
+    if (!populatedExpense) {
+      return null;
+    }
+
+    return this.transformExpense(populatedExpense);
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: number }).code === 11000
+    );
+  }
+
+  private resolveBoardIdFromExpense(expense: Expense): string {
+    const record = expense as unknown as {
+      boardId?: string;
+      tripId?: string | Types.ObjectId;
+    };
+    if (record.boardId) {
+      return record.boardId;
+    }
+    if (!record.tripId) {
+      return '';
+    }
+    return typeof record.tripId === 'string'
+      ? record.tripId
+      : record.tripId.toString();
   }
 }

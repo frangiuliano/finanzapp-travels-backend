@@ -9,6 +9,7 @@ import {
   IsBoolean,
   ValidateNested,
   IsIn,
+  IsUUID,
   Min,
   MinLength,
   MaxLength,
@@ -125,4 +126,8 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsString()
   expenseDate?: string;
+
+  @IsOptional()
+  @IsUUID('4', { message: 'clientRequestId debe ser un UUID v4 válido' })
+  clientRequestId?: string;
 }
