@@ -172,4 +172,24 @@ export class ParticipantsController {
       userId,
     );
   }
+
+  @Post('board/:boardId/leave')
+  @HttpCode(HttpStatus.OK)
+  async leaveBoard(
+    @Param('boardId') boardId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    await this.participantsService.leaveBoard(boardId, userId);
+    return { message: 'Abandonaste el tablero exitosamente' };
+  }
+
+  @Post('trip/:tripId/leave')
+  @HttpCode(HttpStatus.OK)
+  async leaveTrip(
+    @Param('tripId') tripId: string,
+    @GetUser('_id') userId: string,
+  ) {
+    await this.participantsService.leaveBoard(tripId, userId);
+    return { message: 'Abandonaste el viaje exitosamente' };
+  }
 }

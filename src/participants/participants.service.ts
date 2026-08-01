@@ -452,6 +452,35 @@ export class ParticipantsService {
     await this.participantModel.deleteOne({ _id: participantToRemove._id });
   }
 
+  async leaveBoard(boardId: string, userId: string): Promise<void> {
+    const participant = await this.participantModel.findOne({
+      tripId: new Types.ObjectId(boardId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (!participant) {
+      throw new NotFoundException('No participás en este tablero');
+    }
+
+    if (participant.role === ParticipantRole.OWNER) {
+      throw new BadRequestException(
+        'Como propietario no podés abandonar el tablero. Eliminalo desde configuración si querés dejar de usarlo.',
+      );
+    }
+
+    if (participant.invitationId) {
+      await this.invitationModel.updateOne(
+        { _id: participant.invitationId },
+        { status: InvitationStatus.CANCELLED },
+      );
+    }
+
+    await this.participantModel.deleteOne({ _id: participant._id });
+    this.logger.log(
+      `User ${userId} left board ${boardId} (participant ${participant._id.toString()})`,
+    );
+  }
+
   async addGuestParticipant(
     dto: AddGuestParticipantDto,
     requestingUserId: string,
