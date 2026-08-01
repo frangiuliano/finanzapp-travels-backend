@@ -20,6 +20,7 @@ describe('CategoriesService', () => {
 
   const categoryModel = {
     insertMany: jest.fn(),
+    countDocuments: jest.fn(),
     find: jest.fn(),
     findById: jest.fn(),
     findOne: jest.fn(),
@@ -84,6 +85,7 @@ describe('CategoriesService', () => {
 
     it('should return active categories sorted for members', async () => {
       participantsService.ensureParticipantAccess.mockResolvedValue(undefined);
+      categoryModel.countDocuments.mockResolvedValue(1);
       const chain = {
         sort: jest.fn().mockReturnThis(),
         lean: jest
@@ -101,6 +103,29 @@ describe('CategoriesService', () => {
         isActive: true,
       });
       expect(result).toHaveLength(1);
+    });
+
+    it('should seed defaults when board has no categories', async () => {
+      participantsService.ensureParticipantAccess.mockResolvedValue(undefined);
+      categoryModel.countDocuments.mockResolvedValue(0);
+      const seeded = DEFAULT_CATEGORIES.map((item) => ({
+        _id: new Types.ObjectId(),
+        tripId: boardId,
+        ...item,
+        isActive: true,
+        isDefault: true,
+      }));
+      categoryModel.insertMany.mockResolvedValue(seeded);
+      const chain = {
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(seeded),
+      };
+      categoryModel.find.mockReturnValue(chain);
+
+      const result = await service.findAllByBoard(boardId.toString(), userId);
+
+      expect(categoryModel.insertMany).toHaveBeenCalled();
+      expect(result).toHaveLength(DEFAULT_CATEGORIES.length);
     });
   });
 

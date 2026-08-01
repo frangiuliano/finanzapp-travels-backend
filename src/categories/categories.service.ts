@@ -77,8 +77,14 @@ export class CategoriesService {
   ): Promise<Category[]> {
     await this.participantsService.ensureParticipantAccess(boardId, userId);
 
+    const tripId = new Types.ObjectId(boardId);
+    const categoryCount = await this.categoryModel.countDocuments({ tripId });
+    if (categoryCount === 0) {
+      await this.seedDefaults(boardId);
+    }
+
     const filter: Record<string, unknown> = {
-      tripId: new Types.ObjectId(boardId),
+      tripId,
     };
 
     if (!includeInactive) {
