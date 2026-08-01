@@ -212,6 +212,16 @@ const EXPENSE_RELATION_POPULATES = [
   },
 ];
 
+function parseExpenseDateFrom(value: string): Date {
+  return new Date(value);
+}
+
+function parseExpenseDateToExclusive(value: string): Date {
+  const endExclusive = new Date(value);
+  endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+  return endExclusive;
+}
+
 function isPopulatedCategory(
   value: PopulatedCategory | Types.ObjectId,
 ): value is PopulatedCategory {
@@ -538,10 +548,12 @@ export class ExpensesService implements OnModuleInit {
       budgetId?: Types.ObjectId;
       status?: ExpenseStatus;
       categoryId?: Types.ObjectId;
-      paymentMethodId?: Types.ObjectId;
+      $or?: Array<
+        { paymentMethodId: Types.ObjectId } | { cardId: Types.ObjectId }
+      >;
       expenseDate?: {
         $gte?: Date;
-        $lte?: Date;
+        $lt?: Date;
       };
     } = { tripId: new Types.ObjectId(tripId) };
 
@@ -558,16 +570,20 @@ export class ExpensesService implements OnModuleInit {
     }
 
     if (filters.paymentMethodId) {
-      query.paymentMethodId = new Types.ObjectId(filters.paymentMethodId);
+      const paymentMethodObjectId = new Types.ObjectId(filters.paymentMethodId);
+      query.$or = [
+        { paymentMethodId: paymentMethodObjectId },
+        { cardId: paymentMethodObjectId },
+      ];
     }
 
     if (filters.from || filters.to) {
       query.expenseDate = {};
       if (filters.from) {
-        query.expenseDate.$gte = new Date(filters.from);
+        query.expenseDate.$gte = parseExpenseDateFrom(filters.from);
       }
       if (filters.to) {
-        query.expenseDate.$lte = new Date(filters.to);
+        query.expenseDate.$lt = parseExpenseDateToExclusive(filters.to);
       }
     }
 
@@ -701,7 +717,8 @@ export class ExpensesService implements OnModuleInit {
 
     const resolvedUpdatePaymentMethodId =
       this.resolvePaymentMethodId(updateExpenseDto);
-    let updatedPaymentMethodObjectId = expense.paymentMethodId;
+    let updatedPaymentMethodObjectId =
+      expense.paymentMethodId ?? expense.cardId;
     let updatedLegacyPaymentMethod = expense.paymentMethod;
 
     if (
