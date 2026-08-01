@@ -10,6 +10,7 @@ import { BoardsService } from '../trips/trips.service';
 import { BoardType } from '../trips/board.schema';
 import { CategoriesService } from '../categories/categories.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import { FxService } from '../fx/fx.service';
 
 describe('ExpensesService board gates', () => {
   let service: ExpensesService;
@@ -47,6 +48,13 @@ describe('ExpensesService board gates', () => {
     findAvailableForBoard: jest.fn(),
   };
 
+  const fxService = {
+    resolveSnapshot: jest.fn().mockResolvedValue({
+      fxRateToBoardCurrency: 1,
+      fxCapturedAt: new Date(),
+    }),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -62,6 +70,7 @@ describe('ExpensesService board gates', () => {
         { provide: BoardsService, useValue: boardsService },
         { provide: CategoriesService, useValue: categoriesService },
         { provide: PaymentMethodsService, useValue: paymentMethodsService },
+        { provide: FxService, useValue: fxService },
       ],
     }).compile();
 
@@ -115,6 +124,7 @@ describe('ExpensesService board gates', () => {
       boardsService.findByIdOrFail.mockResolvedValue({
         _id: boardId,
         type: BoardType.EVERYDAY,
+        baseCurrency: 'USD',
       });
       participantModel.findOne
         .mockResolvedValueOnce({ _id: participantId })
@@ -161,6 +171,7 @@ describe('ExpensesService board gates', () => {
           { provide: BoardsService, useValue: boardsService },
           { provide: CategoriesService, useValue: categoriesService },
           { provide: PaymentMethodsService, useValue: paymentMethodsService },
+          { provide: FxService, useValue: fxService },
         ],
       }).compile();
 

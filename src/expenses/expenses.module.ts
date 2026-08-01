@@ -14,6 +14,7 @@ import { BoardsModule } from '../trips/trips.module';
 
 import { CategoriesModule } from '../categories/categories.module';
 import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
+import { FxModule } from '../fx/fx.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { PaymentMethodsModule } from '../payment-methods/payment-methods.module'
     forwardRef(() => BoardsModule),
     forwardRef(() => CategoriesModule),
     forwardRef(() => PaymentMethodsModule),
+    FxModule,
   ],
   controllers: [ExpensesController],
   providers: [ExpensesService],

@@ -10,6 +10,7 @@ import { BoardsService } from '../trips/trips.service';
 import { BoardType } from '../trips/board.schema';
 import { CategoriesService } from '../categories/categories.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import { FxService } from '../fx/fx.service';
 
 describe('ExpensesService category and payment methods', () => {
   let service: ExpensesService;
@@ -52,6 +53,13 @@ describe('ExpensesService category and payment methods', () => {
     findAvailableForBoard: jest.fn(),
   };
 
+  const fxService = {
+    resolveSnapshot: jest.fn().mockResolvedValue({
+      fxRateToBoardCurrency: 1,
+      fxCapturedAt: new Date(),
+    }),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -67,6 +75,7 @@ describe('ExpensesService category and payment methods', () => {
         { provide: BoardsService, useValue: boardsService },
         { provide: CategoriesService, useValue: categoriesService },
         { provide: PaymentMethodsService, useValue: paymentMethodsService },
+        { provide: FxService, useValue: fxService },
       ],
     }).compile();
 

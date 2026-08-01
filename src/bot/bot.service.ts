@@ -2185,7 +2185,7 @@ export class BotService {
       const createExpenseDto: CreateExpenseDto = {
         tripId: updatedBotUpdate.currentTripId.toString(),
         amount: expense.amount!,
-        currency: expense.currency || 'USD',
+        ...(expense.currency ? { currency: expense.currency } : {}),
         description: expense.description || 'Gasto sin descripción',
         merchantName: expense.merchantName,
         budgetId: expense.budgetId,

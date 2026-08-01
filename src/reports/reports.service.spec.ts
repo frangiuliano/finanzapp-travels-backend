@@ -131,6 +131,55 @@ describe('ReportsService', () => {
       });
     });
 
+    it('should include cross-currency expenses with FX snapshot in totals', async () => {
+      incomeModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+      expenseModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            amount: 200,
+            currency: 'ARS',
+            categoryId,
+            paymentMethodId,
+          },
+          {
+            amount: 10,
+            currency: 'USD',
+            fxRateToBoardCurrency: 100,
+            categoryId,
+            paymentMethodId,
+          },
+        ]),
+      });
+
+      categoryModel.find.mockReturnValue({
+        lean: jest
+          .fn()
+          .mockResolvedValue([{ _id: categoryId, name: 'Comida' }]),
+      });
+
+      paymentMethodModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            _id: paymentMethodId,
+            name: 'Visa',
+            kind: PaymentMethodKind.CREDIT,
+          },
+        ]),
+      });
+
+      const report = await service.getBoardCalendarReport(
+        boardId.toString(),
+        '2026-07',
+        userId,
+      );
+
+      expect(report.totalExpenses).toBe(1200);
+      expect(report.excludedDueToCurrencyMismatch.expenses).toBe(0);
+    });
+
     it('should require participant access', async () => {
       participantsService.ensureParticipantAccess.mockRejectedValue(
         new ForbiddenException('No tienes acceso'),

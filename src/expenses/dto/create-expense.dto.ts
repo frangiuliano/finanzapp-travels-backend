@@ -46,6 +46,11 @@ export class CreateExpenseDto {
   })
   currency?: string;
 
+  @IsOptional()
+  @IsNumber({}, { message: 'fxRateOverride debe ser un número' })
+  @Min(0.000001, { message: 'fxRateOverride debe ser mayor a 0' })
+  fxRateOverride?: number;
+
   @IsNotEmpty({ message: 'La descripción es obligatoria' })
   @IsString({ message: 'La descripción debe ser texto' })
   @MinLength(3, { message: 'La descripción debe tener al menos 3 caracteres' })
