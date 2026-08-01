@@ -24,3 +24,5 @@ Este proyecto sigue el estándar definido en
 - El número de issue en GitHub no coincide necesariamente con el orden de
   ejecución. Usar `G-NN` (global) o `order-NN` (local).
 - El Developer Agent debe leer este archivo antes de elegir el próximo issue.
+- **CI:** `.github/workflows/ci.yml` corre en PRs a `main` y push a `issue-*`
+  (lint, test, build). El Reviewer debe verificar checks verdes antes de aprobar.
