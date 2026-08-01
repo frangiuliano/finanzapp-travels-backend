@@ -19,6 +19,7 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdateUserPreferencesDto } from '../users/dto/update-user-preferences.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Public } from './decorators/public.decorator';
 import { GetUser } from './decorators/get-user.decorator';
@@ -188,5 +189,18 @@ export class AuthController {
       updateProfileDto,
     );
     return updatedUser;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('preferences')
+  @HttpCode(HttpStatus.OK)
+  async updatePreferences(
+    @GetUser() user: UserDocument,
+    @Body() updatePreferencesDto: UpdateUserPreferencesDto,
+  ) {
+    return this.authService.updatePreferences(
+      user._id.toString(),
+      updatePreferencesDto,
+    );
   }
 }

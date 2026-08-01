@@ -6,14 +6,16 @@ import {
   BotUpdateDocument,
   ConversationState,
 } from '../bot-update.schema';
-import { TripsService } from '../../trips/trips.service';
+import { BoardsService } from '../../trips/trips.service';
+import { UserPreferencesService } from '../../users/user-preferences.service';
 
 @Injectable()
 export class BotUpdateRepository {
   constructor(
     @InjectModel(BotUpdate.name)
     public botUpdateModel: Model<BotUpdateDocument>,
-    private tripsService: TripsService,
+    private boardsService: BoardsService,
+    private userPreferencesService: UserPreferencesService,
   ) {}
 
   async getOrCreateBotUpdate(
@@ -34,43 +36,56 @@ export class BotUpdateRepository {
     return botUpdate;
   }
 
-  async determineActiveTrip(
+  async determineActiveBoardId(
     botUpdate: BotUpdateDocument,
   ): Promise<string | null> {
-    if (botUpdate.currentTripId) {
-      try {
-        await this.tripsService.findOne(
-          botUpdate.currentTripId.toString(),
-          botUpdate.userId!.toString(),
-        );
-        return botUpdate.currentTripId.toString();
-      } catch {
-        // Trip no longer valid, will search for another one below
-      }
-    }
-
-    const trips = await this.tripsService.findAll(botUpdate.userId!.toString());
-
-    if (trips.length === 0) {
+    if (!botUpdate.userId) {
       return null;
     }
 
-    if (trips.length === 1) {
-      const firstTrip = trips[0] as unknown as {
-        _id: Types.ObjectId;
-      } & Record<string, unknown>;
-      const tripId = firstTrip._id.toString();
-      botUpdate.currentTripId = new Types.ObjectId(tripId);
-      await botUpdate.save();
-      return tripId;
+    const userId = botUpdate.userId.toString();
+    const preferredId =
+      await this.userPreferencesService.getActiveBoardId(userId);
+
+    if (preferredId) {
+      try {
+        await this.boardsService.findOne(preferredId, userId);
+        botUpdate.currentTripId = new Types.ObjectId(preferredId);
+        await botUpdate.save();
+        return preferredId;
+      } catch {
+        await this.userPreferencesService.setActiveBoardId(userId, null);
+      }
     }
 
-    const mostRecentTrip = trips[0] as unknown as {
-      _id: Types.ObjectId;
-    } & Record<string, unknown>;
-    const tripId = mostRecentTrip._id.toString();
-    botUpdate.currentTripId = new Types.ObjectId(tripId);
+    if (botUpdate.currentTripId) {
+      try {
+        await this.boardsService.findOne(
+          botUpdate.currentTripId.toString(),
+          userId,
+        );
+        return botUpdate.currentTripId.toString();
+      } catch {
+        // stale session board
+      }
+    }
+
+    const boards = await this.boardsService.findAll(userId);
+    if (boards.length === 0) {
+      return null;
+    }
+
+    const firstBoard = boards[0] as unknown as { _id: Types.ObjectId };
+    const boardId = firstBoard._id.toString();
+    botUpdate.currentTripId = new Types.ObjectId(boardId);
     await botUpdate.save();
-    return tripId;
+    return boardId;
+  }
+
+  /** @deprecated Use determineActiveBoardId */
+  async determineActiveTrip(
+    botUpdate: BotUpdateDocument,
+  ): Promise<string | null> {
+    return this.determineActiveBoardId(botUpdate);
   }
 }

@@ -16,9 +16,14 @@ import { TripsModule } from '../trips/trips.module';
 import { ParticipantsModule } from '../participants/participants.module';
 import { BudgetsModule } from '../budgets/budgets.module';
 import { CardsModule } from '../cards/cards.module';
+import { CategoriesModule } from '../categories/categories.module';
+import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
+import { UsersModule } from '../users/users.module';
 import { TelegramClientService } from './telegram/telegram-client.service';
 import { UserLinkingService } from './linking/user-linking.service';
 import { BotUpdateRepository } from './repositories/bot-update.repository';
+import { BoardCommandHandler } from './handlers/board-command.handler';
+import { EverydayExpenseHandler } from './handlers/everyday-expense.handler';
 
 @Module({
   imports: [
@@ -32,6 +37,9 @@ import { BotUpdateRepository } from './repositories/bot-update.repository';
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BudgetsModule),
     forwardRef(() => CardsModule),
+    forwardRef(() => CategoriesModule),
+    forwardRef(() => PaymentMethodsModule),
+    UsersModule,
   ],
   controllers: [BotController],
   providers: [
@@ -42,6 +50,8 @@ import { BotUpdateRepository } from './repositories/bot-update.repository';
     TelegramClientService,
     UserLinkingService,
     BotUpdateRepository,
+    BoardCommandHandler,
+    EverydayExpenseHandler,
   ],
   exports: [BotService],
 })

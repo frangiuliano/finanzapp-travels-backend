@@ -6,6 +6,8 @@ export enum ConversationState {
   PARSING_EXPENSE = 'parsing_expense',
   ASKING_TRIP = 'asking_trip',
   ASKING_BUCKET = 'asking_bucket',
+  ASKING_CATEGORY = 'asking_category',
+  ASKING_EVERYDAY_PAYMENT = 'asking_everyday_payment',
   ASKING_PAYER = 'asking_payer',
   ASKING_MERCHANT = 'asking_merchant',
   ASKING_SPLIT = 'asking_split',
@@ -42,9 +44,11 @@ export class BotUpdate {
     description?: string;
     merchantName?: string;
     budgetId?: string;
+    categoryId?: string;
     paidByParticipantId?: string;
     paymentMethod?: string;
     cardId?: string;
+    paymentMethodId?: string;
     isDivisible?: boolean;
     splitType?: string;
     splits?: Array<{ participantId: string; amount?: number }>;

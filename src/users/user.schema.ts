@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 
 @Schema({ timestamps: true })
@@ -48,6 +48,10 @@ export class User {
 
   @Prop({ type: Number, unique: true, sparse: true })
   telegramUserId?: number;
+
+  /** Active board for Telegram bot and web (shared preference). */
+  @Prop({ type: Types.ObjectId, ref: 'Board', default: null })
+  activeBoardId?: Types.ObjectId | null;
 }
 
 export type UserDocument = User &
