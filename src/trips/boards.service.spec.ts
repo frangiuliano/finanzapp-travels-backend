@@ -233,6 +233,50 @@ describe('BoardsService', () => {
     });
   });
 
+  describe('assertEverydayFeatures', () => {
+    it('should allow everyday boards', async () => {
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.EVERYDAY,
+      });
+      await expect(
+        service.assertEverydayFeatures(boardId.toString()),
+      ).resolves.toBeDefined();
+    });
+
+    it('should reject travel boards', async () => {
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.TRAVEL,
+      });
+      await expect(
+        service.assertEverydayFeatures(boardId.toString()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('isEverydayBoard', () => {
+    it('should return true for everyday boards', async () => {
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.EVERYDAY,
+      });
+      await expect(service.isEverydayBoard(boardId.toString())).resolves.toBe(
+        true,
+      );
+    });
+
+    it('should return false for travel boards', async () => {
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.TRAVEL,
+      });
+      await expect(service.isEverydayBoard(boardId.toString())).resolves.toBe(
+        false,
+      );
+    });
+  });
+
   describe('update type immutability', () => {
     it('should reject changing board type', async () => {
       participantModel.findOne.mockResolvedValue({
