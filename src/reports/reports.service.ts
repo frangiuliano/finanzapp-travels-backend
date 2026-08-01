@@ -22,6 +22,7 @@ import {
   resolveCycleClosingMonth,
 } from '../common/utils/credit-cycle';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
+import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 
 export interface CategoryBreakdownItem {
   categoryId: string | null;
@@ -168,24 +169,26 @@ export class ReportsService {
       }
     }
 
-    const matchingExpenses = expenses.filter(
-      (expense) => expense.currency === boardCurrency,
-    );
+    let totalExpenses = 0;
     let excludedExpenses = 0;
+    const convertibleExpenses: Expense[] = [];
+
     for (const expense of expenses) {
-      if (expense.currency !== boardCurrency) {
+      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
+        expense,
+        boardCurrency,
+      );
+      if (amountInBoardCurrency == null) {
         excludedExpenses += 1;
+        continue;
       }
+      totalExpenses += amountInBoardCurrency;
+      convertibleExpenses.push(expense);
     }
 
-    const totalExpenses = matchingExpenses.reduce(
-      (sum, expense) => sum + expense.amount,
-      0,
-    );
-
     const [byCategory, byPaymentMethod] = await Promise.all([
-      this.buildCategoryBreakdown(boardId, matchingExpenses),
-      this.buildPaymentMethodBreakdown(matchingExpenses),
+      this.buildCategoryBreakdown(boardId, convertibleExpenses, boardCurrency),
+      this.buildPaymentMethodBreakdown(convertibleExpenses, boardCurrency),
     ]);
 
     return {
@@ -272,14 +275,20 @@ export class ReportsService {
       })
       .lean();
 
-    const matchingExpenses = expenses.filter(
-      (expense) => expense.currency === boardCurrency,
-    );
+    let totalExpenses = 0;
+    let expenseCount = 0;
 
-    const totalExpenses = matchingExpenses.reduce(
-      (sum, expense) => sum + expense.amount,
-      0,
-    );
+    for (const expense of expenses) {
+      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
+        expense,
+        boardCurrency,
+      );
+      if (amountInBoardCurrency == null) {
+        continue;
+      }
+      totalExpenses += amountInBoardCurrency;
+      expenseCount += 1;
+    }
 
     const availableCycles = listRecentCycleLabels(paymentMethod.closingDay, 12);
 
@@ -298,7 +307,7 @@ export class ReportsService {
       periodToInclusive,
       currency: boardCurrency,
       totalExpenses,
-      expenseCount: matchingExpenses.length,
+      expenseCount,
       availableCycles,
     };
   }
@@ -377,13 +386,21 @@ export class ReportsService {
   private async buildCategoryBreakdown(
     boardId: string,
     expenses: Expense[],
+    boardCurrency: string,
   ): Promise<CategoryBreakdownItem[]> {
     const totals = new Map<string | null, { total: number; count: number }>();
 
     for (const expense of expenses) {
+      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
+        expense,
+        boardCurrency,
+      );
+      if (amountInBoardCurrency == null) {
+        continue;
+      }
       const key = expense.categoryId?.toString() ?? null;
       const current = totals.get(key) ?? { total: 0, count: 0 };
-      current.total += expense.amount;
+      current.total += amountInBoardCurrency;
       current.count += 1;
       totals.set(key, current);
     }
@@ -422,13 +439,21 @@ export class ReportsService {
 
   private async buildPaymentMethodBreakdown(
     expenses: Expense[],
+    boardCurrency: string,
   ): Promise<PaymentMethodBreakdownItem[]> {
     const totals = new Map<string | null, { total: number; count: number }>();
 
     for (const expense of expenses) {
+      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
+        expense,
+        boardCurrency,
+      );
+      if (amountInBoardCurrency == null) {
+        continue;
+      }
       const key = resolveExpensePaymentMethodId(expense);
       const current = totals.get(key) ?? { total: 0, count: 0 };
-      current.total += expense.amount;
+      current.total += amountInBoardCurrency;
       current.count += 1;
       totals.set(key, current);
     }

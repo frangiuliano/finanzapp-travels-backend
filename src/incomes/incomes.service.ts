@@ -15,6 +15,7 @@ import { BoardsService } from '../trips/trips.service';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { parseYearMonth } from '../common/utils/parse-year-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
+import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 
 export interface MonthlyBoardSummary {
   boardId: string;
@@ -24,8 +25,8 @@ export interface MonthlyBoardSummary {
   totalExpenses: number;
   remaining: number;
   /**
-   * Until FX snapshot (issue #9), only amounts in the board currency are
-   * included in totals. Other-currency rows are counted here.
+   * Incomes in other currencies are still excluded until income FX is added.
+   * Expenses use FX snapshot when available (issue #9).
    */
   excludedDueToCurrencyMismatch: {
     incomes: number;
@@ -214,11 +215,15 @@ export class IncomesService {
     let totalExpenses = 0;
     let excludedExpenses = 0;
     for (const expense of expenses) {
-      if (expense.currency === boardCurrency) {
-        totalExpenses += expense.amount;
-      } else {
+      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
+        expense,
+        boardCurrency,
+      );
+      if (amountInBoardCurrency == null) {
         excludedExpenses += 1;
+        continue;
       }
+      totalExpenses += amountInBoardCurrency;
     }
 
     return {

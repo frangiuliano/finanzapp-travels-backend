@@ -19,6 +19,7 @@ import { CategoriesService } from '../categories/categories.service';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { parseYearMonth } from '../common/utils/parse-year-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
+import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 
 export interface BoardMonthBudgetProgress {
   budgetId: string;
@@ -218,7 +219,11 @@ export class BoardMonthBudgetsService {
 
     const spentByCategory = new Map<string, number>();
     for (const expense of expenses) {
-      if (expense.currency !== boardCurrency) {
+      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
+        expense,
+        boardCurrency,
+      );
+      if (amountInBoardCurrency == null) {
         continue;
       }
       const key = expense.categoryId?.toString();
@@ -227,7 +232,7 @@ export class BoardMonthBudgetsService {
       }
       spentByCategory.set(
         key,
-        (spentByCategory.get(key) ?? 0) + expense.amount,
+        (spentByCategory.get(key) ?? 0) + amountInBoardCurrency,
       );
     }
 

@@ -36,6 +36,13 @@ export class Expense {
   @Prop({ required: true, default: 'USD' })
   currency: string;
 
+  /** 1 unit of expense.currency = fxRateToBoardCurrency in board.baseCurrency */
+  @Prop({ required: false, min: 0 })
+  fxRateToBoardCurrency?: number;
+
+  @Prop({ type: Date, required: false })
+  fxCapturedAt?: Date;
+
   @Prop({ required: true, minlength: 3, maxlength: 500 })
   description: string;
 

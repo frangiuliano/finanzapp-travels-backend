@@ -34,6 +34,8 @@ import {
   PaymentMethod as PaymentMethodEntity,
   PaymentMethodKind,
 } from '../payment-methods/payment-method.schema';
+import { FxService } from '../fx/fx.service';
+import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 
 export interface ExpenseListFilters {
   budgetId?: string;
@@ -104,6 +106,8 @@ interface PopulatedExpense {
   budgetId?: PopulatedBudget | Types.ObjectId;
   amount: number;
   currency: string;
+  fxRateToBoardCurrency?: number;
+  fxCapturedAt?: Date;
   description: string;
   merchantName?: string;
   tags?: string[];
@@ -258,6 +262,7 @@ export class ExpensesService implements OnModuleInit {
     private boardsService: BoardsService,
     private categoriesService: CategoriesService,
     private paymentMethodsService: PaymentMethodsService,
+    private fxService: FxService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -480,13 +485,25 @@ export class ExpensesService implements OnModuleInit {
       legacyPaymentMethod = this.mapKindToLegacyPaymentMethod(method.kind);
     }
 
+    const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
+    const expenseCurrency =
+      createExpenseDto.currency ?? boardCurrency ?? DEFAULT_CURRENCY;
+
+    const fxSnapshot = await this.fxService.resolveSnapshot(
+      expenseCurrency,
+      boardCurrency,
+      createExpenseDto.fxRateOverride,
+    );
+
     const expense = new this.expenseModel({
       tripId: new Types.ObjectId(boardId),
       budgetId: createExpenseDto.budgetId
         ? new Types.ObjectId(createExpenseDto.budgetId)
         : undefined,
       amount: createExpenseDto.amount,
-      currency: createExpenseDto.currency || DEFAULT_CURRENCY,
+      currency: expenseCurrency,
+      fxRateToBoardCurrency: fxSnapshot.fxRateToBoardCurrency,
+      fxCapturedAt: fxSnapshot.fxCapturedAt,
       description: createExpenseDto.description,
       merchantName: createExpenseDto.merchantName,
       tags: createExpenseDto.tags,
@@ -509,10 +526,11 @@ export class ExpensesService implements OnModuleInit {
     const savedExpense = await expense.save();
 
     if (createExpenseDto.budgetId) {
-      await this.updateBudgetSpent(
-        createExpenseDto.budgetId,
-        savedExpense.amount,
+      const amountForBudget = this.getBudgetAmountForExpense(
+        savedExpense,
+        boardCurrency,
       );
+      await this.updateBudgetSpent(createExpenseDto.budgetId, amountForBudget);
     }
 
     this.logger.log(
@@ -678,7 +696,11 @@ export class ExpensesService implements OnModuleInit {
       );
     }
 
-    const oldAmount = expense.amount;
+    const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
+    const oldAmountForBudget = this.getBudgetAmountForExpense(
+      expense,
+      boardCurrency,
+    );
 
     if (updateExpenseDto.budgetId) {
       const budget = await this.budgetModel.findById(updateExpenseDto.budgetId);
@@ -901,13 +923,20 @@ export class ExpensesService implements OnModuleInit {
       updateExpenseDto.budgetId !== undefined
     ) {
       if (expense.budgetId) {
-        await this.updateBudgetSpent(expense.budgetId.toString(), -oldAmount);
+        await this.updateBudgetSpent(
+          expense.budgetId.toString(),
+          -oldAmountForBudget,
+        );
       }
 
       if (updatedExpense.budgetId) {
+        const newAmountForBudget = this.getBudgetAmountForExpense(
+          updatedExpense,
+          boardCurrency,
+        );
         await this.updateBudgetSpent(
           updatedExpense.budgetId.toString(),
-          updatedExpense.amount,
+          newAmountForBudget,
         );
       }
     }
@@ -948,13 +977,20 @@ export class ExpensesService implements OnModuleInit {
       );
     }
 
-    const amount = expense.amount;
+    const board = await this.boardsService.findByIdOrFail(
+      expense.tripId.toString(),
+    );
+    const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
+    const amountForBudget = this.getBudgetAmountForExpense(
+      expense,
+      boardCurrency,
+    );
 
     await this.expenseModel.findByIdAndDelete(id);
 
     if (expense.budgetId) {
       const budgetId = expense.budgetId.toString();
-      await this.updateBudgetSpent(budgetId, -amount);
+      await this.updateBudgetSpent(budgetId, -amountForBudget);
     }
 
     this.logger.log(`Gasto eliminado: ${id}`);
@@ -1740,6 +1776,15 @@ export class ExpensesService implements OnModuleInit {
 
   private transformExpenses(expenses: any[]): Expense[] {
     return expenses.map((expense) => this.transformExpense(expense));
+  }
+
+  private getBudgetAmountForExpense(
+    expense: Pick<Expense, 'amount' | 'currency' | 'fxRateToBoardCurrency'>,
+    boardCurrency: string,
+  ): number {
+    return (
+      getExpenseAmountInBoardCurrency(expense, boardCurrency) ?? expense.amount
+    );
   }
 
   private async updateBudgetSpent(
