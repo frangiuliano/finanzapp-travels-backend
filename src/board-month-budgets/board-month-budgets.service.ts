@@ -91,7 +91,7 @@ export class BoardMonthBudgetsService {
       categoryId: new Types.ObjectId(createDto.categoryId),
       yearMonth: createDto.yearMonth,
       limit: createDto.limit,
-      currency: createDto.currency ?? board.baseCurrency ?? DEFAULT_CURRENCY,
+      currency: board.baseCurrency ?? DEFAULT_CURRENCY,
       createdBy: new Types.ObjectId(userId),
     });
 
@@ -165,9 +165,6 @@ export class BoardMonthBudgetsService {
 
     if (updateDto.limit !== undefined) {
       budget.limit = updateDto.limit;
-    }
-    if (updateDto.currency !== undefined) {
-      budget.currency = updateDto.currency;
     }
 
     budget.updatedAt = new Date();
@@ -251,7 +248,7 @@ export class BoardMonthBudgetsService {
         spent,
         remaining,
         percentUsed,
-        currency: budget.currency,
+        currency: boardCurrency,
       };
     });
   }

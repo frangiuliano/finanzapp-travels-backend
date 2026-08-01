@@ -3,7 +3,6 @@ import {
   IsString,
   IsNumber,
   Min,
-  IsOptional,
   IsMongoId,
   ValidateIf,
   Matches,
@@ -36,8 +35,4 @@ export class CreateBoardMonthBudgetDto {
   @IsNumber({}, { message: 'limit debe ser un número' })
   @Min(0, { message: 'limit no puede ser negativo' })
   limit: number;
-
-  @IsOptional()
-  @IsString({ message: 'currency debe ser texto' })
-  currency?: string;
 }
