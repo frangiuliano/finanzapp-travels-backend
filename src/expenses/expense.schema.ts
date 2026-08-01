@@ -48,6 +48,9 @@ export class Expense {
   @Prop({ required: false, maxlength: 50 })
   category?: string;
 
+  @Prop({ type: Types.ObjectId, ref: 'Category', required: false })
+  categoryId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'Participant', required: true })
   paidByParticipantId: Types.ObjectId;
 
@@ -69,6 +72,9 @@ export class Expense {
 
   @Prop({ type: Types.ObjectId, ref: 'PaymentMethod', required: false })
   cardId?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'PaymentMethod', required: false })
+  paymentMethodId?: Types.ObjectId;
 
   @Prop({ type: Boolean, default: false, required: true })
   isDivisible: boolean;
@@ -130,6 +136,7 @@ export type ExpenseDocument = Expense & Document;
 export const ExpenseSchema = SchemaFactory.createForClass(Expense);
 
 ExpenseSchema.index({ tripId: 1, createdAt: -1 });
+ExpenseSchema.index({ tripId: 1, expenseDate: -1 });
 ExpenseSchema.index(
   { budgetId: 1 },
   { partialFilterExpression: { budgetId: { $exists: true } } },
@@ -138,3 +145,5 @@ ExpenseSchema.index({ paidByParticipantId: 1 });
 ExpenseSchema.index({ status: 1 });
 ExpenseSchema.index({ expenseDate: -1 });
 ExpenseSchema.index({ cardId: 1 });
+ExpenseSchema.index({ categoryId: 1 });
+ExpenseSchema.index({ paymentMethodId: 1 });
