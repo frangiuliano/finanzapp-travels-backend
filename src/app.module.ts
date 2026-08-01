@@ -14,6 +14,7 @@ import { BotModule } from './bot/bot.module';
 import { CardsModule } from './cards/cards.module';
 import { CategoriesModule } from './categories/categories.module';
 import { PaymentMethodsModule } from './payment-methods/payment-methods.module';
+import { IncomesModule } from './incomes/incomes.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { PaymentMethodsModule } from './payment-methods/payment-methods.module';
     CardsModule,
     CategoriesModule,
     PaymentMethodsModule,
+    IncomesModule,
   ],
   controllers: [AppController],
   providers: [
