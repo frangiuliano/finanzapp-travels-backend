@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -13,6 +14,7 @@ import {
   ExpenseStatus,
   SplitType,
   ExpenseSplit,
+  PaymentMethod as ExpensePaymentMethod,
 } from './expense.schema';
 import { Budget, BudgetDocument } from '../budgets/budget.schema';
 import {
@@ -26,6 +28,21 @@ import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { resolveCardTypeFromBrand } from '../common/utils/card-type-from-brand';
 import { BoardsService } from '../trips/trips.service';
+import { CategoriesService } from '../categories/categories.service';
+import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import {
+  PaymentMethod as PaymentMethodEntity,
+  PaymentMethodKind,
+} from '../payment-methods/payment-method.schema';
+
+export interface ExpenseListFilters {
+  budgetId?: string;
+  status?: ExpenseStatus;
+  categoryId?: string;
+  paymentMethodId?: string;
+  from?: string;
+  to?: string;
+}
 
 interface PopulatedUser {
   _id: Types.ObjectId;
@@ -61,6 +78,26 @@ interface PopulatedExpenseSplit {
   percentage?: number;
 }
 
+interface PopulatedCategory {
+  _id: Types.ObjectId;
+  name: string;
+  icon?: string;
+  color?: string;
+  isActive?: boolean;
+}
+
+interface PopulatedPaymentMethodEntity {
+  _id: Types.ObjectId;
+  name: string;
+  lastFourDigits?: string;
+  brand?: string;
+  kind?: PaymentMethodKind;
+  ownerType?: string;
+  closingDay?: number;
+  userId?: PopulatedUser | Types.ObjectId;
+  tripId?: Types.ObjectId;
+}
+
 interface PopulatedExpense {
   _id: Types.ObjectId;
   tripId: Types.ObjectId;
@@ -71,10 +108,12 @@ interface PopulatedExpense {
   merchantName?: string;
   tags?: string[];
   category?: string;
+  categoryId?: PopulatedCategory | Types.ObjectId;
   paidByParticipantId: PopulatedParticipant | Types.ObjectId;
   status: ExpenseStatus;
   paymentMethod?: string;
   cardId?: PopulatedCard | Types.ObjectId;
+  paymentMethodId?: PopulatedPaymentMethodEntity | Types.ObjectId;
   isDivisible: boolean;
   splitType?: SplitType;
   splits?: PopulatedExpenseSplit[];
@@ -142,8 +181,63 @@ function objectIdToString(id: Types.ObjectId | string | undefined): string {
   return String(id);
 }
 
+const EXPENSE_RELATION_POPULATES = [
+  {
+    path: 'paidByParticipantId',
+    select: '_id guestName guestEmail',
+    populate: {
+      path: 'userId',
+      select: 'firstName lastName email',
+    },
+  },
+  { path: 'createdBy', select: 'firstName lastName email' },
+  { path: 'budgetId', select: '_id name' },
+  { path: 'categoryId', select: '_id name icon color isActive' },
+  {
+    path: 'paymentMethodId',
+    select:
+      '_id name lastFourDigits brand kind ownerType closingDay userId tripId',
+    populate: {
+      path: 'userId',
+      select: 'firstName lastName',
+    },
+  },
+  {
+    path: 'cardId',
+    select: '_id name lastFourDigits brand type userId',
+    populate: {
+      path: 'userId',
+      select: 'firstName lastName',
+    },
+  },
+];
+
+function isPopulatedCategory(
+  value: PopulatedCategory | Types.ObjectId,
+): value is PopulatedCategory {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Types.ObjectId) &&
+    'name' in value &&
+    !('lastFourDigits' in value)
+  );
+}
+
+function isPopulatedPaymentMethodEntity(
+  value: PopulatedPaymentMethodEntity | Types.ObjectId,
+): value is PopulatedPaymentMethodEntity {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Types.ObjectId) &&
+    'name' in value &&
+    ('kind' in value || 'ownerType' in value || 'lastFourDigits' in value)
+  );
+}
+
 @Injectable()
-export class ExpensesService {
+export class ExpensesService implements OnModuleInit {
   private readonly logger = new Logger(ExpensesService.name);
 
   constructor(
@@ -152,7 +246,34 @@ export class ExpensesService {
     @InjectModel(Participant.name)
     private participantModel: Model<ParticipantDocument>,
     private boardsService: BoardsService,
+    private categoriesService: CategoriesService,
+    private paymentMethodsService: PaymentMethodsService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    const legacyExpenses = await this.expenseModel
+      .find({
+        cardId: { $exists: true, $ne: null },
+        paymentMethodId: { $exists: false },
+      })
+      .select('_id cardId')
+      .lean();
+
+    if (legacyExpenses.length === 0) {
+      return;
+    }
+
+    for (const expense of legacyExpenses) {
+      await this.expenseModel.updateOne(
+        { _id: expense._id },
+        { $set: { paymentMethodId: expense.cardId } },
+      );
+    }
+
+    this.logger.log(
+      `Backfilled paymentMethodId on ${legacyExpenses.length} legacy expenses`,
+    );
+  }
 
   async create(
     createExpenseDto: CreateExpenseDto,
@@ -325,18 +446,48 @@ export class ExpensesService {
       ? new Date(createExpenseDto.expenseDate)
       : new Date();
 
+    if (createExpenseDto.categoryId) {
+      await this.assertCategoryBelongsToBoard(
+        boardId,
+        createExpenseDto.categoryId,
+        userId,
+      );
+    }
+
+    const resolvedPaymentMethodId =
+      this.resolvePaymentMethodId(createExpenseDto);
+    let legacyPaymentMethod =
+      createExpenseDto.paymentMethod || ExpensePaymentMethod.CASH;
+    let paymentMethodObjectId: Types.ObjectId | undefined;
+
+    if (resolvedPaymentMethodId) {
+      const method = await this.assertPaymentMethodAvailableForBoard(
+        boardId,
+        userId,
+        resolvedPaymentMethodId,
+      );
+      paymentMethodObjectId = new Types.ObjectId(resolvedPaymentMethodId);
+      legacyPaymentMethod = this.mapKindToLegacyPaymentMethod(method.kind);
+    }
+
     const expense = new this.expenseModel({
-      ...createExpenseDto,
       tripId: new Types.ObjectId(boardId),
       budgetId: createExpenseDto.budgetId
         ? new Types.ObjectId(createExpenseDto.budgetId)
         : undefined,
+      amount: createExpenseDto.amount,
       currency: createExpenseDto.currency || DEFAULT_CURRENCY,
-      paidByParticipantId: new Types.ObjectId(paidByParticipantId),
-      paymentMethod: createExpenseDto.paymentMethod || 'cash',
-      cardId: createExpenseDto.cardId
-        ? new Types.ObjectId(createExpenseDto.cardId)
+      description: createExpenseDto.description,
+      merchantName: createExpenseDto.merchantName,
+      tags: createExpenseDto.tags,
+      category: createExpenseDto.category,
+      categoryId: createExpenseDto.categoryId
+        ? new Types.ObjectId(createExpenseDto.categoryId)
         : undefined,
+      paidByParticipantId: new Types.ObjectId(paidByParticipantId),
+      paymentMethod: legacyPaymentMethod,
+      cardId: paymentMethodObjectId,
+      paymentMethodId: paymentMethodObjectId,
       isDivisible,
       splitType: isDivisible ? createExpenseDto.splitType : undefined,
       splits: processedSplits,
@@ -360,24 +511,7 @@ export class ExpensesService {
 
     const populatedExpense = await this.expenseModel
       .findById(savedExpense._id)
-      .populate({
-        path: 'paidByParticipantId',
-        select: '_id guestName guestEmail',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName email',
-        },
-      })
-      .populate('createdBy', 'firstName lastName email')
-      .populate('budgetId', '_id name')
-      .populate({
-        path: 'cardId',
-        select: '_id name lastFourDigits brand type userId',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName',
-        },
-      })
+      .populate(EXPENSE_RELATION_POPULATES)
       .lean();
 
     return this.transformExpense(populatedExpense);
@@ -386,8 +520,7 @@ export class ExpensesService {
   async findAll(
     tripId: string,
     userId: string,
-    budgetId?: string,
-    status?: ExpenseStatus,
+    filters: ExpenseListFilters = {},
   ): Promise<Expense[]> {
     const userParticipant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(tripId),
@@ -404,36 +537,43 @@ export class ExpensesService {
       tripId: Types.ObjectId;
       budgetId?: Types.ObjectId;
       status?: ExpenseStatus;
+      categoryId?: Types.ObjectId;
+      paymentMethodId?: Types.ObjectId;
+      expenseDate?: {
+        $gte?: Date;
+        $lte?: Date;
+      };
     } = { tripId: new Types.ObjectId(tripId) };
 
-    if (budgetId) {
-      query.budgetId = new Types.ObjectId(budgetId);
+    if (filters.budgetId) {
+      query.budgetId = new Types.ObjectId(filters.budgetId);
     }
 
-    if (status) {
-      query.status = status;
+    if (filters.status) {
+      query.status = filters.status;
+    }
+
+    if (filters.categoryId) {
+      query.categoryId = new Types.ObjectId(filters.categoryId);
+    }
+
+    if (filters.paymentMethodId) {
+      query.paymentMethodId = new Types.ObjectId(filters.paymentMethodId);
+    }
+
+    if (filters.from || filters.to) {
+      query.expenseDate = {};
+      if (filters.from) {
+        query.expenseDate.$gte = new Date(filters.from);
+      }
+      if (filters.to) {
+        query.expenseDate.$lte = new Date(filters.to);
+      }
     }
 
     const expenses = await this.expenseModel
       .find(query)
-      .populate({
-        path: 'paidByParticipantId',
-        select: '_id guestName guestEmail',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName email',
-        },
-      })
-      .populate('createdBy', 'firstName lastName email')
-      .populate('budgetId', '_id name')
-      .populate({
-        path: 'cardId',
-        select: '_id name lastFourDigits brand type userId',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName',
-        },
-      })
+      .populate(EXPENSE_RELATION_POPULATES)
       .sort({ expenseDate: -1, createdAt: -1 })
       .lean();
 
@@ -443,30 +583,13 @@ export class ExpensesService {
   async findOne(id: string, userId: string): Promise<Expense> {
     const expense = await this.expenseModel
       .findById(id)
-      .populate({
-        path: 'paidByParticipantId',
-        select: '_id guestName guestEmail',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName email',
-        },
-      })
+      .populate(EXPENSE_RELATION_POPULATES)
       .populate({
         path: 'splits.participantId',
         select: '_id guestName guestEmail',
         populate: {
           path: 'userId',
           select: 'firstName lastName email',
-        },
-      })
-      .populate('createdBy', 'firstName lastName email')
-      .populate('budgetId', '_id name')
-      .populate({
-        path: 'cardId',
-        select: '_id name lastFourDigits brand type userId',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName',
         },
       })
       .lean();
@@ -564,6 +687,45 @@ export class ExpensesService {
           'El participante que pagó no existe o no pertenece a este viaje',
         );
       }
+    }
+
+    const boardIdStr = expense.tripId.toString();
+
+    if (updateExpenseDto.categoryId) {
+      await this.assertCategoryBelongsToBoard(
+        boardIdStr,
+        updateExpenseDto.categoryId,
+        userId,
+      );
+    }
+
+    const resolvedUpdatePaymentMethodId =
+      this.resolvePaymentMethodId(updateExpenseDto);
+    let updatedPaymentMethodObjectId = expense.paymentMethodId;
+    let updatedLegacyPaymentMethod = expense.paymentMethod;
+
+    if (
+      updateExpenseDto.paymentMethodId !== undefined ||
+      updateExpenseDto.cardId !== undefined
+    ) {
+      if (resolvedUpdatePaymentMethodId) {
+        const method = await this.assertPaymentMethodAvailableForBoard(
+          boardIdStr,
+          userId,
+          resolvedUpdatePaymentMethodId,
+        );
+        updatedPaymentMethodObjectId = new Types.ObjectId(
+          resolvedUpdatePaymentMethodId,
+        );
+        updatedLegacyPaymentMethod = this.mapKindToLegacyPaymentMethod(
+          method.kind,
+        );
+      } else {
+        updatedPaymentMethodObjectId = undefined;
+        updatedLegacyPaymentMethod = ExpensePaymentMethod.CASH;
+      }
+    } else if (updateExpenseDto.paymentMethod !== undefined) {
+      updatedLegacyPaymentMethod = updateExpenseDto.paymentMethod;
     }
 
     const isDivisible =
@@ -682,7 +844,7 @@ export class ExpensesService {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { tripId: _, ...updateFields } = updateExpenseDto;
+    const { tripId: _, boardId: __, ...updateFields } = updateExpenseDto;
 
     Object.assign(expense, {
       ...updateFields,
@@ -695,16 +857,15 @@ export class ExpensesService {
       paidByParticipantId: updateExpenseDto.paidByParticipantId
         ? new Types.ObjectId(updateExpenseDto.paidByParticipantId)
         : expense.paidByParticipantId,
-      paymentMethod:
-        updateExpenseDto.paymentMethod !== undefined
-          ? updateExpenseDto.paymentMethod
-          : expense.paymentMethod,
-      cardId:
-        updateExpenseDto.cardId !== undefined
-          ? updateExpenseDto.cardId
-            ? new Types.ObjectId(updateExpenseDto.cardId)
+      categoryId:
+        updateExpenseDto.categoryId !== undefined
+          ? updateExpenseDto.categoryId
+            ? new Types.ObjectId(updateExpenseDto.categoryId)
             : undefined
-          : expense.cardId,
+          : expense.categoryId,
+      paymentMethod: updatedLegacyPaymentMethod,
+      cardId: updatedPaymentMethodObjectId,
+      paymentMethodId: updatedPaymentMethodObjectId,
       isDivisible,
       splitType: isDivisible
         ? updateExpenseDto.splitType || expense.splitType
@@ -738,30 +899,13 @@ export class ExpensesService {
 
     const populatedExpense = await this.expenseModel
       .findById(updatedExpense._id)
-      .populate({
-        path: 'paidByParticipantId',
-        select: '_id guestName guestEmail',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName email',
-        },
-      })
+      .populate(EXPENSE_RELATION_POPULATES)
       .populate({
         path: 'splits.participantId',
         select: '_id guestName guestEmail',
         populate: {
           path: 'userId',
           select: 'firstName lastName email',
-        },
-      })
-      .populate('createdBy', 'firstName lastName email')
-      .populate('budgetId', '_id name')
-      .populate({
-        path: 'cardId',
-        select: '_id name lastFourDigits brand type userId',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName',
         },
       })
       .lean();
@@ -1259,30 +1403,13 @@ export class ExpensesService {
 
     const populatedExpense = await this.expenseModel
       .findById(updatedExpense._id)
-      .populate({
-        path: 'paidByParticipantId',
-        select: '_id guestName guestEmail',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName email',
-        },
-      })
+      .populate(EXPENSE_RELATION_POPULATES)
       .populate({
         path: 'splits.participantId',
         select: '_id guestName guestEmail',
         populate: {
           path: 'userId',
           select: 'firstName lastName email',
-        },
-      })
-      .populate('createdBy', 'firstName lastName email')
-      .populate('budgetId', '_id name')
-      .populate({
-        path: 'cardId',
-        select: '_id name lastFourDigits brand type userId',
-        populate: {
-          path: 'userId',
-          select: 'firstName lastName',
         },
       })
       .lean();
@@ -1300,6 +1427,7 @@ export class ExpensesService {
 
     transformed._id = objectIdToString(expenseRecord._id);
     transformed.tripId = objectIdToString(expenseRecord.tripId);
+    transformed.boardId = objectIdToString(expenseRecord.tripId);
 
     if (expenseRecord.budgetId) {
       if (isPopulatedBudget(expenseRecord.budgetId)) {
@@ -1310,6 +1438,22 @@ export class ExpensesService {
         transformed.budgetId = objectIdToString(expenseRecord.budgetId._id);
       } else {
         transformed.budgetId = objectIdToString(expenseRecord.budgetId);
+      }
+    }
+
+    if (expenseRecord.categoryId) {
+      if (isPopulatedCategory(expenseRecord.categoryId)) {
+        const category = expenseRecord.categoryId;
+        transformed.category = {
+          _id: objectIdToString(category._id),
+          name: category.name,
+          icon: category.icon,
+          color: category.color,
+          isActive: category.isActive,
+        };
+        transformed.categoryId = objectIdToString(category._id);
+      } else {
+        transformed.categoryId = objectIdToString(expenseRecord.categoryId);
       }
     }
 
@@ -1377,9 +1521,37 @@ export class ExpensesService {
       }
     }
 
-    if (expenseRecord.cardId) {
-      if (isPopulatedCard(expenseRecord.cardId)) {
-        const card = expenseRecord.cardId;
+    const paymentMethodSource =
+      expenseRecord.paymentMethodId ?? expenseRecord.cardId;
+
+    if (paymentMethodSource) {
+      if (isPopulatedPaymentMethodEntity(paymentMethodSource)) {
+        const method = paymentMethodSource;
+        const methodData = {
+          _id: objectIdToString(method._id),
+          name: method.name,
+          lastFourDigits: method.lastFourDigits,
+          kind: method.kind,
+          ownerType: method.ownerType,
+          closingDay: method.closingDay,
+          brand: method.brand,
+          type: resolveCardTypeFromBrand(method.brand, method.kind),
+          user:
+            method.userId && isPopulatedUser(method.userId)
+              ? {
+                  _id: objectIdToString(method.userId._id),
+                  firstName: method.userId.firstName,
+                  lastName: method.userId.lastName,
+                }
+              : undefined,
+        };
+
+        transformed.paymentMethodDetail = methodData;
+        transformed.paymentMethodId = objectIdToString(method._id);
+        transformed.card = methodData;
+        transformed.cardId = objectIdToString(method._id);
+      } else if (isPopulatedCard(paymentMethodSource)) {
+        const card = paymentMethodSource;
         const cardData: {
           _id: string;
           name: string;
@@ -1407,10 +1579,14 @@ export class ExpensesService {
           }
         }
 
+        transformed.paymentMethodDetail = cardData;
+        transformed.paymentMethodId = objectIdToString(card._id);
         transformed.card = cardData;
         transformed.cardId = objectIdToString(card._id);
       } else {
-        transformed.cardId = objectIdToString(expenseRecord.cardId);
+        const idStr = objectIdToString(paymentMethodSource);
+        transformed.paymentMethodId = idStr;
+        transformed.cardId = idStr;
       }
     }
 
@@ -1488,6 +1664,61 @@ export class ExpensesService {
     }
 
     return transformed as unknown as Expense;
+  }
+
+  private resolvePaymentMethodId(dto: {
+    paymentMethodId?: string;
+    cardId?: string;
+  }): string | undefined {
+    return dto.paymentMethodId || dto.cardId;
+  }
+
+  private mapKindToLegacyPaymentMethod(
+    kind: PaymentMethodKind,
+  ): ExpensePaymentMethod {
+    return kind === PaymentMethodKind.CASH
+      ? ExpensePaymentMethod.CASH
+      : ExpensePaymentMethod.CARD;
+  }
+
+  private async assertCategoryBelongsToBoard(
+    boardId: string,
+    categoryId: string,
+    userId: string,
+  ): Promise<void> {
+    const category = await this.categoriesService.findOne(categoryId, userId);
+
+    if (category.tripId.toString() !== boardId) {
+      throw new BadRequestException('La categoría no pertenece a este tablero');
+    }
+
+    if (!category.isActive) {
+      throw new BadRequestException('La categoría no está activa');
+    }
+  }
+
+  private async assertPaymentMethodAvailableForBoard(
+    boardId: string,
+    userId: string,
+    paymentMethodId: string,
+  ): Promise<PaymentMethodEntity> {
+    const available = await this.paymentMethodsService.findAvailableForBoard(
+      boardId,
+      userId,
+    );
+
+    const method = available.find((item) => {
+      const doc = item as PaymentMethodEntity & { _id: Types.ObjectId };
+      return String(doc._id) === paymentMethodId;
+    });
+
+    if (!method) {
+      throw new BadRequestException(
+        'El medio de pago no está disponible para este tablero',
+      );
+    }
+
+    return method;
   }
 
   private transformExpenses(expenses: any[]): Expense[] {

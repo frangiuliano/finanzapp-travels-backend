@@ -12,6 +12,9 @@ import { ParticipantsModule } from '../participants/participants.module';
 import { BudgetsModule } from '../budgets/budgets.module';
 import { BoardsModule } from '../trips/trips.module';
 
+import { CategoriesModule } from '../categories/categories.module';
+import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
+
 @Module({
   imports: [
     MongooseModule.forFeature([
@@ -22,6 +25,8 @@ import { BoardsModule } from '../trips/trips.module';
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BudgetsModule),
     forwardRef(() => BoardsModule),
+    forwardRef(() => CategoriesModule),
+    forwardRef(() => PaymentMethodsModule),
   ],
   controllers: [ExpensesController],
   providers: [ExpensesService],

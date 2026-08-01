@@ -44,6 +44,10 @@ export class ExpensesController {
     @Query('boardId') boardId?: string,
     @Query('budgetId') budgetId?: string,
     @Query('status') status?: ExpenseStatus,
+    @Query('categoryId') categoryId?: string,
+    @Query('paymentMethodId') paymentMethodId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const resolvedBoardId = boardId || tripId;
     if (!resolvedBoardId) {
@@ -55,8 +59,14 @@ export class ExpensesController {
     const expenses = await this.expensesService.findAll(
       resolvedBoardId,
       userId,
-      budgetId,
-      status,
+      {
+        budgetId,
+        status,
+        categoryId,
+        paymentMethodId,
+        from,
+        to,
+      },
     );
 
     return {

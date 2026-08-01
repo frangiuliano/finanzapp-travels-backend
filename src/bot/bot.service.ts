@@ -2193,6 +2193,7 @@ export class BotService {
         status: (expense.status as ExpenseStatus) || ExpenseStatus.PAID,
         paymentMethod:
           (expense.paymentMethod as PaymentMethod) || PaymentMethod.CASH,
+        paymentMethodId: expense.cardId,
         cardId: expense.cardId,
         isDivisible: expense.isDivisible || false,
         splitType: expense.splitType as SplitType | undefined,

@@ -8,6 +8,8 @@ import { Budget } from '../budgets/budget.schema';
 import { Participant } from '../participants/schemas/participant.schema';
 import { BoardsService } from '../trips/trips.service';
 import { BoardType } from '../trips/board.schema';
+import { CategoriesService } from '../categories/categories.service';
+import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 
 describe('ExpensesService board gates', () => {
   let service: ExpensesService;
@@ -37,6 +39,14 @@ describe('ExpensesService board gates', () => {
     isTravelBoard: jest.fn(),
   };
 
+  const categoriesService = {
+    findOne: jest.fn(),
+  };
+
+  const paymentMethodsService = {
+    findAvailableForBoard: jest.fn(),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -50,6 +60,8 @@ describe('ExpensesService board gates', () => {
           useValue: participantModel,
         },
         { provide: BoardsService, useValue: boardsService },
+        { provide: CategoriesService, useValue: categoriesService },
+        { provide: PaymentMethodsService, useValue: paymentMethodsService },
       ],
     }).compile();
 
@@ -147,6 +159,8 @@ describe('ExpensesService board gates', () => {
             useValue: participantModel,
           },
           { provide: BoardsService, useValue: boardsService },
+          { provide: CategoriesService, useValue: categoriesService },
+          { provide: PaymentMethodsService, useValue: paymentMethodsService },
         ],
       }).compile();
 

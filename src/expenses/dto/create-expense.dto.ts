@@ -74,6 +74,10 @@ export class CreateExpenseDto {
   category?: string;
 
   @IsOptional()
+  @IsMongoId({ message: 'El ID de la categoría no es válido' })
+  categoryId?: string;
+
+  @IsOptional()
   @IsMongoId({ message: 'El ID del participante no es válido' })
   paidByParticipantId?: string;
 
@@ -92,6 +96,10 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsMongoId({ message: 'El ID de la tarjeta no es válido' })
   cardId?: string;
+
+  @IsOptional()
+  @IsMongoId({ message: 'El ID del medio de pago no es válido' })
+  paymentMethodId?: string;
 
   @IsOptional()
   @IsBoolean()
