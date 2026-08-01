@@ -160,9 +160,26 @@ export class BoardsService implements OnModuleInit {
     return board;
   }
 
+  async assertEverydayFeatures(boardId: string): Promise<BoardDocument> {
+    const board = await this.findByIdOrFail(boardId);
+
+    if (board.type !== BoardType.EVERYDAY) {
+      throw new ForbiddenException(
+        'Esta operación solo está disponible en tableros de tipo everyday',
+      );
+    }
+
+    return board;
+  }
+
   async isTravelBoard(boardId: string): Promise<boolean> {
     const board = await this.findByIdOrFail(boardId);
     return board.type === BoardType.TRAVEL;
+  }
+
+  async isEverydayBoard(boardId: string): Promise<boolean> {
+    const board = await this.findByIdOrFail(boardId);
+    return board.type === BoardType.EVERYDAY;
   }
 
   async update(

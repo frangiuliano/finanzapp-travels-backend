@@ -15,6 +15,7 @@ import { CardsModule } from './cards/cards.module';
 import { CategoriesModule } from './categories/categories.module';
 import { PaymentMethodsModule } from './payment-methods/payment-methods.module';
 import { IncomesModule } from './incomes/incomes.module';
+import { BoardMonthBudgetsModule } from './board-month-budgets/board-month-budgets.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { IncomesModule } from './incomes/incomes.module';
     CategoriesModule,
     PaymentMethodsModule,
     IncomesModule,
+    BoardMonthBudgetsModule,
   ],
   controllers: [AppController],
   providers: [
