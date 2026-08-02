@@ -21,6 +21,7 @@ import {
   JwtSignPayload,
   AuthResponse,
 } from './interfaces/jwt-payload.interface';
+import { hashToken } from '../common/utils/token-hash.util';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -103,7 +104,7 @@ export class AuthService {
       password,
       firstName,
       lastName,
-      emailVerificationToken,
+      emailVerificationToken: hashToken(emailVerificationToken),
       emailVerified: false,
     });
 
@@ -145,6 +146,12 @@ export class AuthService {
       throw new UnauthorizedException('Tu cuenta ha sido desactivada');
     }
 
+    if (!user.emailVerified) {
+      throw new UnauthorizedException(
+        'Debes verificar tu email antes de iniciar sesión',
+      );
+    }
+
     if (!user.username) {
       user.username = await this.generateUsernameForUser(user);
     }
@@ -161,15 +168,10 @@ export class AuthService {
   }
 
   async refreshToken(refreshToken: string): Promise<AuthResponse> {
-    this.logger.log(
-      'Refresh attempt (token length: ' + refreshToken?.length + ')',
-    );
-
     try {
       const payload = this.jwtService.verify<JwtPayload>(refreshToken, {
         secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
       });
-      this.logger.log('JWT verified, sub: ' + payload.sub);
 
       const user = await this.userModel
         .findById(payload.sub)
@@ -177,30 +179,23 @@ export class AuthService {
         .exec();
 
       if (!user) {
-        this.logger.warn('Refresh failed: user not found, sub: ' + payload.sub);
         throw new UnauthorizedException('Usuario no encontrado');
       }
 
       if (!user.isActive) {
-        this.logger.warn('Refresh failed: user inactive');
         throw new UnauthorizedException('Tu cuenta ha sido desactivada');
       }
 
-      const tokenInList = user.refreshTokens?.includes(refreshToken);
-      this.logger.log(
-        'refreshTokens count: ' +
-          (user.refreshTokens?.length ?? 0) +
-          ', token in list: ' +
-          tokenInList,
-      );
+      const tokenHash = hashToken(refreshToken);
+      const tokenInList = user.refreshTokens?.includes(tokenHash);
 
       if (!tokenInList) {
-        this.logger.warn('Refresh failed: token not in user.refreshTokens');
         throw new UnauthorizedException('Refresh token inválido');
       }
 
-      const tokens = await this.generateTokens(user);
-      this.logger.log('Refresh success for sub: ' + payload.sub);
+      const tokens = await this.generateTokens(user, {
+        revokeTokenHash: tokenHash,
+      });
 
       return {
         ...tokens,
@@ -234,6 +229,7 @@ export class AuthService {
 
   private async generateTokens(
     user: UserDocument,
+    options?: { revokeTokenHash?: string },
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const payload: JwtSignPayload = {
       sub: user._id.toString(),
@@ -274,7 +270,14 @@ export class AuthService {
     if (!user.refreshTokens) {
       user.refreshTokens = [];
     }
-    user.refreshTokens.push(refreshToken);
+
+    if (options?.revokeTokenHash) {
+      user.refreshTokens = user.refreshTokens.filter(
+        (storedToken) => storedToken !== options.revokeTokenHash,
+      );
+    }
+
+    user.refreshTokens.push(hashToken(refreshToken));
 
     if (user.refreshTokens.length > 10) {
       user.refreshTokens = user.refreshTokens.slice(-10);
@@ -298,7 +301,7 @@ export class AuthService {
     const resetExpires = new Date();
     resetExpires.setHours(resetExpires.getHours() + 1);
 
-    user.passwordResetToken = resetToken;
+    user.passwordResetToken = hashToken(resetToken);
     user.passwordResetExpires = resetExpires;
     await user.save({ validateBeforeSave: false });
 
@@ -311,7 +314,7 @@ export class AuthService {
   async resetPassword(token: string, newPassword: string): Promise<void> {
     const user = await this.userModel
       .findOne({
-        passwordResetToken: token,
+        passwordResetToken: hashToken(token),
         passwordResetExpires: { $gt: new Date() },
       })
       .exec();
@@ -329,7 +332,7 @@ export class AuthService {
 
   async verifyEmail(token: string): Promise<void> {
     const user = await this.userModel
-      .findOne({ emailVerificationToken: token })
+      .findOne({ emailVerificationToken: hashToken(token) })
       .exec();
 
     if (!user) {
@@ -362,7 +365,7 @@ export class AuthService {
     }
 
     const emailVerificationToken = crypto.randomBytes(32).toString('hex');
-    user.emailVerificationToken = emailVerificationToken;
+    user.emailVerificationToken = hashToken(emailVerificationToken);
     await user.save({ validateBeforeSave: false });
 
     await this.notificationsService.sendVerificationEmail(
@@ -379,7 +382,7 @@ export class AuthService {
 
     if (user && user.refreshTokens) {
       user.refreshTokens = user.refreshTokens.filter(
-        (token) => token !== refreshToken,
+        (storedToken) => storedToken !== hashToken(refreshToken),
       );
       await user.save({ validateBeforeSave: false });
     }

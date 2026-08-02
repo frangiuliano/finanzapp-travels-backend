@@ -3,11 +3,13 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  UnauthorizedException,
   Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { randomBytes } from 'crypto';
+import { hashToken } from '../common/utils/token-hash.util';
 import {
   Participant,
   ParticipantDocument,
@@ -138,7 +140,7 @@ export class ParticipantsService {
       tripId,
       email: normalizedEmail,
       invitedBy: new Types.ObjectId(requestingUserId),
-      token,
+      token: hashToken(token),
       status: InvitationStatus.PENDING,
       expiresAt,
     });
@@ -199,7 +201,9 @@ export class ParticipantsService {
   }
 
   async getInvitationInfo(token: string): Promise<InvitationInfo> {
-    const invitation = await this.invitationModel.findOne({ token });
+    const invitation = await this.invitationModel.findOne({
+      token: hashToken(token),
+    });
 
     if (!invitation) {
       throw new NotFoundException('Invitación no encontrada');
@@ -244,7 +248,9 @@ export class ParticipantsService {
     token: string,
     userId?: string,
   ): Promise<AcceptInvitationResult> {
-    const invitation = await this.invitationModel.findOne({ token });
+    const invitation = await this.invitationModel.findOne({
+      token: hashToken(token),
+    });
 
     if (!invitation) {
       throw new NotFoundException('Invitación no encontrada');
@@ -275,7 +281,13 @@ export class ParticipantsService {
       };
     }
 
-    if (userId && user._id.toString() !== userId) {
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Debes iniciar sesión para aceptar esta invitación',
+      );
+    }
+
+    if (user._id.toString() !== userId) {
       throw new ForbiddenException(
         'Esta invitación fue enviada a otro email. Inicia sesión con el email correcto.',
       );

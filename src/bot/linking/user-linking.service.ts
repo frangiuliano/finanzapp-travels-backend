@@ -8,6 +8,7 @@ import {
 } from '../telegram-link-token.schema';
 import { TelegramClientService } from '../telegram/telegram-client.service';
 import { BotUpdateRepository } from '../repositories/bot-update.repository';
+import { hashToken } from '../../common/utils/token-hash.util';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -66,7 +67,7 @@ export class UserLinkingService {
 
     this.logger.log(`Buscando token en BD: ${trimmedToken.substring(0, 8)}...`);
     const linkToken = await this.linkTokenModel
-      .findOne({ token: trimmedToken })
+      .findOne({ token: hashToken(trimmedToken) })
       .exec();
 
     if (!linkToken) {
@@ -128,7 +129,7 @@ export class UserLinkingService {
 
     await this.linkTokenModel.create({
       userId: new Types.ObjectId(userId),
-      token,
+      token: hashToken(token),
       expiresAt: new Date(Date.now() + 3600 * 1000),
     });
 

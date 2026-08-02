@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { timingSafeEqualStrings } from '../../common/utils/token-hash.util';
 
 @Injectable()
 export class TelegramClientService implements OnModuleInit {
@@ -37,11 +38,23 @@ export class TelegramClientService implements OnModuleInit {
       return;
     }
 
+    const secretToken = this.configService.get<string>(
+      'TELEGRAM_WEBHOOK_SECRET',
+    );
+    if (!secretToken) {
+      this.logger.warn(
+        'TELEGRAM_WEBHOOK_SECRET no configurado: el webhook rechazará requests hasta definirlo',
+      );
+    }
+
     try {
       const response = await fetch(`${this.telegramApiUrl}/setWebhook`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: webhookUrl }),
+        body: JSON.stringify({
+          url: webhookUrl,
+          ...(secretToken ? { secret_token: secretToken } : {}),
+        }),
       });
 
       const data = (await response.json()) as {
@@ -57,6 +70,14 @@ export class TelegramClientService implements OnModuleInit {
     } catch (error) {
       this.logger.error('Error configurando webhook:', error);
     }
+  }
+
+  validateWebhookSecret(header: string | undefined): boolean {
+    const expected = this.configService.get<string>('TELEGRAM_WEBHOOK_SECRET');
+    if (!expected || !header) {
+      return false;
+    }
+    return timingSafeEqualStrings(header, expected);
   }
 
   private getWebhookUrl(): string | null {

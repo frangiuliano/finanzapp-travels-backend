@@ -1,9 +1,18 @@
-import { Controller, Post, Body, UseGuards, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  UseGuards,
+  Logger,
+  Headers,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { BotService } from './bot.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { UserDocument } from '../users/user.schema';
+import { TelegramClientService } from './telegram/telegram-client.service';
 
 interface TelegramUpdate {
   message?: {
@@ -23,16 +32,27 @@ interface TelegramUpdate {
 export class BotController {
   private readonly logger = new Logger(BotController.name);
 
-  constructor(private readonly botService: BotService) {}
+  constructor(
+    private readonly botService: BotService,
+    private readonly telegramClient: TelegramClientService,
+  ) {}
 
   @Post('webhook')
   @Public()
-  webhook(@Body() update: TelegramUpdate) {
-    this.logger.log('=== WEBHOOK RECIBIDO ===');
-    this.logger.log(`Update completo: ${JSON.stringify(update)}`);
-    this.logger.log(
-      `Tipo de update: ${update.message ? 'message' : update.callback_query ? 'callback_query' : 'unknown'}`,
-    );
+  webhook(
+    @Headers('x-telegram-bot-api-secret-token') secretToken: string | undefined,
+    @Body() update: TelegramUpdate,
+  ) {
+    if (!this.telegramClient.validateWebhookSecret(secretToken)) {
+      throw new UnauthorizedException('Webhook no autorizado');
+    }
+
+    const updateType = update.message
+      ? 'message'
+      : update.callback_query
+        ? 'callback_query'
+        : 'unknown';
+    this.logger.debug(`Webhook Telegram recibido (${updateType})`);
 
     setImmediate(() => {
       this.botService.handleUpdate(update).catch((error) => {

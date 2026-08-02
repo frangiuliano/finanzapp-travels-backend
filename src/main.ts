@@ -28,12 +28,17 @@ async function bootstrap() {
 
   console.log('Orígenes permitidos por CORS:', allowedOrigins);
 
+  const isProduction = process.env.NODE_ENV === 'production';
+
   app.enableCors({
     origin: (
       origin: string | undefined,
       callback: (err: Error | null, allow?: boolean) => void,
     ) => {
       if (!origin) {
+        if (isProduction) {
+          return callback(new Error('No permitido por CORS'));
+        }
         return callback(null, true);
       }
 

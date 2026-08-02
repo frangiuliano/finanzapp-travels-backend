@@ -40,7 +40,6 @@ import { BillingPeriodsModule } from './billing-periods/billing-periods.module';
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
         const uri = configService.get<string>('MONGODB_URI');
-        console.log('MongoDB URI:', uri);
         return {
           uri,
           retryWrites: true,
