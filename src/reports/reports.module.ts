@@ -12,6 +12,7 @@ import {
 import { ParticipantsModule } from '../participants/participants.module';
 import { BoardsModule } from '../trips/trips.module';
 import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
+import { BillingPeriodsModule } from '../billing-periods/billing-periods.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { PaymentMethodsModule } from '../payment-methods/payment-methods.module'
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BoardsModule),
     forwardRef(() => PaymentMethodsModule),
+    forwardRef(() => BillingPeriodsModule),
   ],
   controllers: [ReportsController],
   providers: [ReportsService],

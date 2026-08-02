@@ -21,6 +21,8 @@ import { RecurringIncomesModule } from './recurring-incomes/recurring-incomes.mo
 import { RecurringExpensesModule } from './recurring-expenses/recurring-expenses.module';
 import { InstallmentPlansModule } from './installment-plans/installment-plans.module';
 import { ForecastModule } from './forecast/forecast.module';
+import { InAppNotificationsModule } from './in-app-notifications/in-app-notifications.module';
+import { BillingPeriodsModule } from './billing-periods/billing-periods.module';
 
 @Module({
   imports: [
@@ -63,6 +65,8 @@ import { ForecastModule } from './forecast/forecast.module';
     RecurringExpensesModule,
     InstallmentPlansModule,
     ForecastModule,
+    InAppNotificationsModule,
+    BillingPeriodsModule,
   ],
   controllers: [AppController],
   providers: [

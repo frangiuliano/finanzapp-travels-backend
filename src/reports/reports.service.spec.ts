@@ -13,6 +13,7 @@ import {
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import { BillingPeriodsService } from '../billing-periods/billing-periods.service';
 
 describe('ReportsService', () => {
   let service: ReportsService;
@@ -40,6 +41,10 @@ describe('ReportsService', () => {
     findAll: jest.fn(),
   };
 
+  const billingPeriodsService = {
+    findConfirmedPeriod: jest.fn().mockResolvedValue(null),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -56,6 +61,7 @@ describe('ReportsService', () => {
         { provide: ParticipantsService, useValue: participantsService },
         { provide: BoardsService, useValue: boardsService },
         { provide: PaymentMethodsService, useValue: paymentMethodsService },
+        { provide: BillingPeriodsService, useValue: billingPeriodsService },
       ],
     }).compile();
 

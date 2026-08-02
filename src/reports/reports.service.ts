@@ -12,6 +12,7 @@ import {
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import { BillingPeriodsService } from '../billing-periods/billing-periods.service';
 import { Board } from '../trips/board.schema';
 import { parseYearMonth } from '../common/utils/parse-year-month';
 import {
@@ -103,6 +104,12 @@ function parseDateFrom(value: string): Date {
   return new Date(value);
 }
 
+function addUtcDay(dateStr: string, days: number): string {
+  const date = new Date(`${dateStr}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 type BoardListItem = Board & { _id: Types.ObjectId };
 
 function getBoardId(board: BoardListItem): string {
@@ -132,6 +139,7 @@ export class ReportsService {
     private participantsService: ParticipantsService,
     private boardsService: BoardsService,
     private paymentMethodsService: PaymentMethodsService,
+    private billingPeriodsService: BillingPeriodsService,
   ) {}
 
   async getBoardCalendarReport(
@@ -256,10 +264,23 @@ export class ReportsService {
 
     const board = await this.boardsService.findByIdOrFail(boardId);
     const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
-    const { from, toExclusive, periodToInclusive } = getCreditCycleRange(
+
+    const confirmedPeriod =
+      await this.billingPeriodsService.findConfirmedPeriod(
+        paymentMethodId,
+        cycleLabel,
+      );
+
+    const defaultRange = getCreditCycleRange(
       cycleLabel,
       paymentMethod.closingDay,
     );
+    const from = confirmedPeriod?.periodFrom ?? defaultRange.from;
+    const periodToInclusive =
+      confirmedPeriod?.periodTo ?? defaultRange.periodToInclusive;
+    const toExclusive = confirmedPeriod
+      ? addUtcDay(periodToInclusive, 1)
+      : defaultRange.toExclusive;
 
     const expenses = await this.expenseModel
       .find({

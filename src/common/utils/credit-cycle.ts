@@ -131,3 +131,14 @@ export function listRecentCycleLabels(
 
   return labels;
 }
+
+/** True when the reference date is on or after the cycle's closing date. */
+export function isCycleClosed(
+  cycleLabel: string,
+  closingDay: number,
+  referenceDate: Date = new Date(),
+): boolean {
+  const { periodToInclusive } = getCreditCycleRange(cycleLabel, closingDay);
+  const ref = referenceDate.toISOString().slice(0, 10);
+  return ref >= periodToInclusive;
+}
