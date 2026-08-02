@@ -28,17 +28,13 @@ async function bootstrap() {
 
   console.log('Orígenes permitidos por CORS:', allowedOrigins);
 
-  const isProduction = process.env.NODE_ENV === 'production';
-
   app.enableCors({
     origin: (
       origin: string | undefined,
       callback: (err: Error | null, allow?: boolean) => void,
     ) => {
+      // Health probes (Fly.io), curl, and server-to-server calls omit Origin.
       if (!origin) {
-        if (isProduction) {
-          return callback(new Error('No permitido por CORS'));
-        }
         return callback(null, true);
       }
 
@@ -57,8 +53,7 @@ async function bootstrap() {
         callback(null, true);
       } else {
         console.warn(`Origen no permitido por CORS: ${origin}`);
-        console.warn(`Orígenes permitidos:`, allowedOrigins);
-        callback(new Error('No permitido por CORS'));
+        callback(null, false);
       }
     },
     credentials: true,
