@@ -52,6 +52,9 @@ export class PaymentMethod {
   @Prop({ default: true })
   isActive: boolean;
 
+  @Prop({ default: false })
+  isDefault: boolean;
+
   @Prop({ type: Types.ObjectId })
   migratedFromCardId?: Types.ObjectId;
 }

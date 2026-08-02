@@ -52,6 +52,7 @@ describe('BoardsService', () => {
   };
 
   const paymentMethodsService = {
+    seedDefaults: jest.fn().mockResolvedValue([]),
     deleteByBoard: jest.fn().mockResolvedValue(undefined),
   };
 
@@ -135,6 +136,9 @@ describe('BoardsService', () => {
         }),
       );
       expect(categoriesService.seedDefaults).toHaveBeenCalledWith(
+        boardId.toString(),
+      );
+      expect(paymentMethodsService.seedDefaults).toHaveBeenCalledWith(
         boardId.toString(),
       );
       expect(result).toEqual(saved);

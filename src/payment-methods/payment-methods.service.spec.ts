@@ -24,6 +24,8 @@ describe('PaymentMethodsService', () => {
     findById: jest.fn(),
     findOne: jest.fn(),
     deleteMany: jest.fn(),
+    insertMany: jest.fn(),
+    countDocuments: jest.fn(),
   };
 
   const paymentMethodModel = jest
@@ -94,22 +96,36 @@ describe('PaymentMethodsService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('should create board-owned cash for members', async () => {
-      participantsService.ensureParticipantAccess.mockResolvedValue(undefined);
+    it('should reject manual cash creation', async () => {
+      await expect(
+        service.create(
+          {
+            ownerType: PaymentMethodOwnerType.BOARD,
+            boardId: boardId.toString(),
+            kind: PaymentMethodKind.CASH,
+            name: 'Efectivo hogar',
+          },
+          userId,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
 
-      const result = await service.create(
+    it('should seed default cash for a board', async () => {
+      modelMethods.insertMany.mockResolvedValue([
         {
+          _id: methodId,
           ownerType: PaymentMethodOwnerType.BOARD,
-          boardId: boardId.toString(),
           kind: PaymentMethodKind.CASH,
-          name: 'Efectivo hogar',
+          name: 'Efectivo / Transferencia',
+          isDefault: true,
         },
-        userId,
-      );
+      ]);
 
-      expect(result.ownerType).toBe(PaymentMethodOwnerType.BOARD);
-      expect(result.kind).toBe(PaymentMethodKind.CASH);
-      expect(participantsService.ensureParticipantAccess).toHaveBeenCalled();
+      const result = await service.seedDefaults(boardId.toString());
+
+      expect(modelMethods.insertMany).toHaveBeenCalled();
+      expect(result).toHaveLength(1);
+      expect(result[0].kind).toBe(PaymentMethodKind.CASH);
     });
   });
 
@@ -129,6 +145,7 @@ describe('PaymentMethodsService', () => {
       participantsService.findByTrip.mockResolvedValue([
         { userId: new Types.ObjectId(userId) },
       ]);
+      modelMethods.countDocuments.mockResolvedValue(1);
 
       const chain = {
         populate: jest.fn().mockReturnThis(),

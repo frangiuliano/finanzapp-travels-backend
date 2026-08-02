@@ -19,6 +19,7 @@ import { ParticipantsService } from '../participants/participants.service';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { Card, CardDocument } from '../cards/card.schema';
 import { UserDocument } from '../users/user.schema';
+import { DEFAULT_PAYMENT_METHODS } from './constants/default-payment-methods';
 
 @Injectable()
 export class PaymentMethodsService implements OnModuleInit {
@@ -69,11 +70,49 @@ export class PaymentMethodsService implements OnModuleInit {
     }
   }
 
+  async seedDefaults(boardId: string): Promise<PaymentMethod[]> {
+    const tripId = new Types.ObjectId(boardId);
+    const docs = DEFAULT_PAYMENT_METHODS.map((seed) => ({
+      ownerType: PaymentMethodOwnerType.BOARD,
+      tripId,
+      kind: seed.kind,
+      name: seed.name,
+      isActive: true,
+      isDefault: true,
+    }));
+
+    const inserted = await this.paymentMethodModel.insertMany(docs);
+    this.logger.log(
+      `Seeded ${inserted.length} default payment method(s) for board ${boardId}`,
+    );
+    return inserted;
+  }
+
+  async ensureBoardDefaults(boardId: string): Promise<void> {
+    const tripId = new Types.ObjectId(boardId);
+    const existingDefault = await this.paymentMethodModel.countDocuments({
+      ownerType: PaymentMethodOwnerType.BOARD,
+      tripId,
+      kind: PaymentMethodKind.CASH,
+      isDefault: true,
+    });
+
+    if (existingDefault === 0) {
+      await this.seedDefaults(boardId);
+    }
+  }
+
   async create(
     createDto: CreatePaymentMethodDto,
     userId: string,
   ): Promise<PaymentMethod> {
     this.assertKindAllowed(createDto.kind);
+
+    if (createDto.kind === PaymentMethodKind.CASH) {
+      throw new BadRequestException(
+        'Efectivo / Transferencia se crea automáticamente en cada tablero',
+      );
+    }
 
     if (createDto.ownerType === PaymentMethodOwnerType.USER) {
       const method = new this.paymentMethodModel({
@@ -141,6 +180,7 @@ export class PaymentMethodsService implements OnModuleInit {
     includeInactive = false,
   ): Promise<PaymentMethod[]> {
     await this.participantsService.ensureParticipantAccess(boardId, userId);
+    await this.ensureBoardDefaults(boardId);
 
     const filter: Record<string, unknown> = {
       ownerType: PaymentMethodOwnerType.BOARD,
@@ -153,7 +193,7 @@ export class PaymentMethodsService implements OnModuleInit {
 
     return this.paymentMethodModel
       .find(filter)
-      .sort({ kind: 1, name: 1 })
+      .sort({ isDefault: -1, kind: 1, name: 1 })
       .lean();
   }
 
@@ -163,6 +203,7 @@ export class PaymentMethodsService implements OnModuleInit {
     includeInactive = false,
   ): Promise<PaymentMethod[]> {
     await this.participantsService.ensureParticipantAccess(boardId, userId);
+    await this.ensureBoardDefaults(boardId);
 
     const participants = await this.participantsService.findByTrip(
       boardId,
@@ -189,7 +230,7 @@ export class PaymentMethodsService implements OnModuleInit {
       })
       .populate('userId', 'firstName lastName')
       .populate('tripId', 'name')
-      .sort({ ownerType: 1, kind: 1, name: 1 })
+      .sort({ isDefault: -1, ownerType: 1, kind: 1, name: 1 })
       .lean();
   }
 
@@ -218,6 +259,12 @@ export class PaymentMethodsService implements OnModuleInit {
 
     await this.ensureCanModify(method, userId);
 
+    if (method.isDefault && updateDto.isActive === false) {
+      throw new BadRequestException(
+        'No se puede archivar un medio de pago predeterminado',
+      );
+    }
+
     if (updateDto.name !== undefined) {
       method.name = updateDto.name.trim();
     }
@@ -244,6 +291,18 @@ export class PaymentMethodsService implements OnModuleInit {
   }
 
   async archive(id: string, userId: string): Promise<PaymentMethod> {
+    const method = await this.paymentMethodModel.findById(id);
+
+    if (!method) {
+      throw new NotFoundException('Medio de pago no encontrado');
+    }
+
+    if (method.isDefault) {
+      throw new BadRequestException(
+        'No se puede archivar un medio de pago predeterminado',
+      );
+    }
+
     return this.update(id, { isActive: false }, userId);
   }
 
@@ -301,13 +360,9 @@ export class PaymentMethodsService implements OnModuleInit {
   }
 
   private assertKindAllowed(kind: PaymentMethodKind): void {
-    const allowed = [
-      PaymentMethodKind.CASH,
-      PaymentMethodKind.DEBIT,
-      PaymentMethodKind.CREDIT,
-    ];
+    const allowed = [PaymentMethodKind.DEBIT, PaymentMethodKind.CREDIT];
     if (!allowed.includes(kind)) {
-      throw new BadRequestException('kind debe ser cash, debit o credit');
+      throw new BadRequestException('kind debe ser debit o credit');
     }
   }
 

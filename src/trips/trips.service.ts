@@ -72,7 +72,9 @@ export class BoardsService implements OnModuleInit {
       role: ParticipantRole.OWNER,
     });
 
-    await this.categoriesService.seedDefaults(savedBoard._id.toString());
+    const boardId = savedBoard._id.toString();
+    await this.categoriesService.seedDefaults(boardId);
+    await this.paymentMethodsService.seedDefaults(boardId);
 
     return savedBoard;
   }
