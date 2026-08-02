@@ -9,6 +9,8 @@ import { BoardsService } from '../trips/trips.service';
 import { CategoriesService } from '../categories/categories.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 import { FxService } from '../fx/fx.service';
+import { ExpenseFxResolver } from '../fx/expense-fx.resolver';
+import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 
 describe('ExpensesService idempotency', () => {
   let service: ExpensesService;
@@ -59,6 +61,16 @@ describe('ExpensesService idempotency', () => {
       fxCapturedAt: new Date(),
     }),
   };
+  const expenseFxResolver = {
+    buildFxOnCreate: jest.fn().mockReturnValue(null),
+    resolveSpotSnapshot: jest.fn().mockResolvedValue({
+      fxRateToBoardCurrency: 1,
+      fxCapturedAt: new Date(),
+    }),
+    resolveDisplayFx: jest.fn().mockResolvedValue(null),
+    getAmountInBoardCurrency: jest.fn().mockResolvedValue(null),
+  };
+  const materializationService = { skipExpenseOccurrence: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -76,6 +88,11 @@ describe('ExpensesService idempotency', () => {
         { provide: CategoriesService, useValue: categoriesService },
         { provide: PaymentMethodsService, useValue: paymentMethodsService },
         { provide: FxService, useValue: fxService },
+        { provide: ExpenseFxResolver, useValue: expenseFxResolver },
+        {
+          provide: RecurringMaterializationService,
+          useValue: materializationService,
+        },
       ],
     }).compile();
 

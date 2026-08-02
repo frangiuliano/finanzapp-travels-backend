@@ -8,6 +8,7 @@ import {
 } from './installment-plan.schema';
 import { ParticipantsModule } from '../participants/participants.module';
 import { BoardsModule } from '../trips/trips.module';
+import { FxModule } from '../fx/fx.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { BoardsModule } from '../trips/trips.module';
     ]),
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BoardsModule),
+    FxModule,
   ],
   controllers: [InstallmentPlansController],
   providers: [InstallmentPlansService],

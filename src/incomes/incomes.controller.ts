@@ -105,6 +105,23 @@ export class IncomesController {
     };
   }
 
+  @Post(':id/confirm')
+  @HttpCode(HttpStatus.OK)
+  async confirm(@Param('id') id: string, @GetUser() user: UserDocument) {
+    const income = await this.incomesService.confirm(id, user._id.toString());
+    return {
+      message: 'Ingreso confirmado exitosamente',
+      income,
+    };
+  }
+
+  @Post(':id/skip')
+  @HttpCode(HttpStatus.OK)
+  async skip(@Param('id') id: string, @GetUser() user: UserDocument) {
+    await this.incomesService.skip(id, user._id.toString());
+    return { message: 'Ingreso omitido para este mes' };
+  }
+
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id') id: string, @GetUser() user: UserDocument) {

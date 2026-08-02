@@ -66,4 +66,9 @@ export class CreateInstallmentPlanDto {
   @IsString()
   @IsIn(SUPPORTED_CURRENCIES)
   currency?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.000001)
+  fxRateOverride?: number;
 }

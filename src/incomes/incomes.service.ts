@@ -6,8 +6,12 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Income, IncomeDocument } from './income.schema';
-import { Expense, ExpenseDocument } from '../expenses/expense.schema';
+import { Income, IncomeDocument, IncomeStatus } from './income.schema';
+import {
+  Expense,
+  ExpenseDocument,
+  ExpenseStatus,
+} from '../expenses/expense.schema';
 import { CreateIncomeDto } from './dto/create-income.dto';
 import { UpdateIncomeDto } from './dto/update-income.dto';
 import { ParticipantsService } from '../participants/participants.service';
@@ -16,6 +20,7 @@ import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { parseYearMonth } from '../common/utils/parse-year-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
+import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 
 export interface MonthlyBoardSummary {
   boardId: string;
@@ -57,6 +62,7 @@ export class IncomesService {
     private expenseModel: Model<ExpenseDocument>,
     private participantsService: ParticipantsService,
     private boardsService: BoardsService,
+    private materializationService: RecurringMaterializationService,
   ) {}
 
   async create(
@@ -82,6 +88,7 @@ export class IncomesService {
       incomeDate: createIncomeDto.incomeDate
         ? parseIncomeDate(createIncomeDto.incomeDate)
         : new Date(),
+      status: IncomeStatus.CONFIRMED,
       createdBy: new Types.ObjectId(userId),
     });
 
@@ -169,6 +176,36 @@ export class IncomesService {
     this.logger.log(`Income deleted: ${id}`);
   }
 
+  async confirm(id: string, userId: string): Promise<Income> {
+    const income = await this.incomeModel.findById(id);
+
+    if (!income) {
+      throw new NotFoundException('Ingreso no encontrado');
+    }
+
+    await this.participantsService.ensureParticipantAccess(
+      income.tripId.toString(),
+      userId,
+    );
+
+    if (income.status === IncomeStatus.CONFIRMED) {
+      throw new BadRequestException('Este ingreso ya está confirmado');
+    }
+
+    if (income.skippedAt) {
+      throw new BadRequestException('No se puede confirmar un ingreso omitido');
+    }
+
+    income.status = IncomeStatus.CONFIRMED;
+    const saved = await income.save();
+    this.logger.log(`Income confirmed: ${id}`);
+    return saved;
+  }
+
+  async skip(id: string, userId: string): Promise<void> {
+    await this.materializationService.skipIncomeOccurrence(id, userId);
+  }
+
   async getMonthlySummary(
     boardId: string,
     yearMonth: string,
@@ -192,12 +229,22 @@ export class IncomesService {
         .find({
           tripId: boardObjectId,
           incomeDate: dateFilter,
+          skippedAt: { $exists: false },
+          $or: [
+            { recurringIncomeId: { $exists: false } },
+            { status: IncomeStatus.CONFIRMED },
+          ],
         })
         .lean(),
       this.expenseModel
         .find({
           tripId: boardObjectId,
           expenseDate: dateFilter,
+          skippedAt: { $exists: false },
+          $or: [
+            { recurringExpenseId: { $exists: false } },
+            { status: ExpenseStatus.PAID },
+          ],
         })
         .lean(),
     ]);

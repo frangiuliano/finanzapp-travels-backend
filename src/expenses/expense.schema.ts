@@ -16,6 +16,16 @@ export enum PaymentMethod {
   CARD = 'card',
 }
 
+export enum ExpenseFxPolicy {
+  SPOT = 'spot',
+  CREDIT_CYCLE = 'credit_cycle',
+}
+
+export enum ExpenseFxPurpose {
+  REFERENTIAL = 'referential',
+  SETTLED = 'settled',
+}
+
 export interface ExpenseSplit {
   participantId: Types.ObjectId;
   amount: number;
@@ -42,6 +52,24 @@ export class Expense {
 
   @Prop({ type: Date, required: false })
   fxCapturedAt?: Date;
+
+  @Prop({
+    type: String,
+    enum: ExpenseFxPolicy,
+    required: false,
+  })
+  fxPolicy?: ExpenseFxPolicy;
+
+  @Prop({
+    type: String,
+    enum: ExpenseFxPurpose,
+    required: false,
+  })
+  fxPurpose?: ExpenseFxPurpose;
+
+  /** Credit card closing-month label (YYYY-MM) when fxPolicy is credit_cycle */
+  @Prop({ required: false, match: /^\d{4}-(0[1-9]|1[0-2])$/ })
+  billingCycleLabel?: string;
 
   @Prop({ required: true, minlength: 3, maxlength: 500 })
   description: string;
@@ -125,6 +153,15 @@ export class Expense {
   })
   splits?: ExpenseSplit[];
 
+  @Prop({ type: Types.ObjectId, ref: 'RecurringExpense', required: false })
+  recurringExpenseId?: Types.ObjectId;
+
+  @Prop({ required: false })
+  occurrenceKey?: string;
+
+  @Prop({ type: Date, required: false })
+  skippedAt?: Date;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 
@@ -167,3 +204,4 @@ ExpenseSchema.index(
     },
   },
 );
+ExpenseSchema.index({ occurrenceKey: 1 }, { unique: true, sparse: true });

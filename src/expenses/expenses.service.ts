@@ -35,7 +35,14 @@ import {
   PaymentMethodKind,
 } from '../payment-methods/payment-method.schema';
 import { FxService } from '../fx/fx.service';
+import {
+  ExpenseFxResolver,
+  ExpenseDisplayFx,
+  PaymentMethodFxContext,
+} from '../fx/expense-fx.resolver';
+import { ExpenseFxPolicy, ExpenseFxPurpose } from './expense.schema';
 import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
+import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 
 export interface ExpenseListFilters {
   budgetId?: string;
@@ -263,6 +270,8 @@ export class ExpensesService implements OnModuleInit {
     private categoriesService: CategoriesService,
     private paymentMethodsService: PaymentMethodsService,
     private fxService: FxService,
+    private expenseFxResolver: ExpenseFxResolver,
+    private materializationService: RecurringMaterializationService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -372,15 +381,6 @@ export class ExpensesService implements OnModuleInit {
     if (!paidByParticipant) {
       throw new NotFoundException(
         'El participante que pagó no existe o no pertenece a este tablero',
-      );
-    }
-
-    if (
-      board.type !== BoardType.TRAVEL &&
-      createExpenseDto.status === ExpenseStatus.PENDING
-    ) {
-      throw new BadRequestException(
-        'El estado pending solo está disponible en tableros travel',
       );
     }
 
@@ -494,12 +494,15 @@ export class ExpensesService implements OnModuleInit {
       createExpenseDto.paymentMethod || ExpensePaymentMethod.CASH;
     let paymentMethodObjectId: Types.ObjectId | undefined;
 
+    let paymentMethodForFx: PaymentMethodEntity | null = null;
+
     if (resolvedPaymentMethodId) {
       const method = await this.assertPaymentMethodAvailableForBoard(
         boardId,
         userId,
         resolvedPaymentMethodId,
       );
+      paymentMethodForFx = method;
       paymentMethodObjectId = new Types.ObjectId(resolvedPaymentMethodId);
       legacyPaymentMethod = this.mapKindToLegacyPaymentMethod(method.kind);
     }
@@ -508,11 +511,38 @@ export class ExpensesService implements OnModuleInit {
     const expenseCurrency =
       createExpenseDto.currency ?? boardCurrency ?? DEFAULT_CURRENCY;
 
-    const fxSnapshot = await this.fxService.resolveSnapshot(
+    const fxOnCreate = this.expenseFxResolver.buildFxOnCreate({
       expenseCurrency,
       boardCurrency,
-      createExpenseDto.fxRateOverride,
-    );
+      expenseDate,
+      manualRate: createExpenseDto.fxRateOverride,
+      paymentMethod: paymentMethodForFx,
+    });
+
+    let fxRateToBoardCurrency: number | undefined;
+    let fxCapturedAt: Date | undefined;
+    let fxPolicy: ExpenseFxPolicy | undefined;
+    let fxPurpose: ExpenseFxPurpose | undefined;
+    let billingCycleLabel: string | undefined;
+
+    if (fxOnCreate) {
+      fxPolicy = fxOnCreate.fxPolicy;
+      fxPurpose = fxOnCreate.fxPurpose;
+      billingCycleLabel = fxOnCreate.billingCycleLabel;
+
+      if (fxOnCreate.fxPolicy === ExpenseFxPolicy.SPOT) {
+        const snapshot = await this.expenseFxResolver.resolveSpotSnapshot(
+          expenseCurrency,
+          boardCurrency,
+          createExpenseDto.fxRateOverride,
+        );
+        fxRateToBoardCurrency = snapshot.fxRateToBoardCurrency;
+        fxCapturedAt = snapshot.fxCapturedAt;
+      } else if (createExpenseDto.fxRateOverride !== undefined) {
+        fxRateToBoardCurrency = createExpenseDto.fxRateOverride;
+        fxCapturedAt = new Date();
+      }
+    }
 
     const expense = new this.expenseModel({
       tripId: new Types.ObjectId(boardId),
@@ -521,8 +551,11 @@ export class ExpensesService implements OnModuleInit {
         : undefined,
       amount: createExpenseDto.amount,
       currency: expenseCurrency,
-      fxRateToBoardCurrency: fxSnapshot.fxRateToBoardCurrency,
-      fxCapturedAt: fxSnapshot.fxCapturedAt,
+      fxRateToBoardCurrency,
+      fxCapturedAt,
+      fxPolicy,
+      fxPurpose,
+      billingCycleLabel,
       description: createExpenseDto.description,
       merchantName: createExpenseDto.merchantName,
       tags: createExpenseDto.tags,
@@ -564,10 +597,12 @@ export class ExpensesService implements OnModuleInit {
     }
 
     if (createExpenseDto.budgetId) {
-      const amountForBudget = this.getBudgetAmountForExpense(
-        savedExpense,
-        boardCurrency,
-      );
+      const amountForBudget =
+        (await this.expenseFxResolver.getAmountInBoardCurrency(
+          savedExpense,
+          boardCurrency,
+          paymentMethodForFx,
+        )) ?? savedExpense.amount;
       await this.updateBudgetSpent(createExpenseDto.budgetId, amountForBudget);
     }
 
@@ -580,7 +615,10 @@ export class ExpensesService implements OnModuleInit {
       .populate(EXPENSE_RELATION_POPULATES)
       .lean();
 
-    return this.transformExpense(populatedExpense);
+    return this.enrichWithDisplayFx(
+      this.transformExpense(populatedExpense),
+      boardCurrency,
+    );
   }
 
   async findAll(
@@ -649,7 +687,14 @@ export class ExpensesService implements OnModuleInit {
       .sort({ expenseDate: -1, createdAt: -1 })
       .lean();
 
-    return this.transformExpenses(expenses);
+    const board = await this.boardsService.findByIdOrFail(tripId);
+    const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
+    const transformed = this.transformExpenses(expenses);
+    return Promise.all(
+      transformed.map((expense) =>
+        this.enrichWithDisplayFx(expense, boardCurrency),
+      ),
+    );
   }
 
   async findOne(id: string, userId: string): Promise<Expense> {
@@ -681,7 +726,15 @@ export class ExpensesService implements OnModuleInit {
       );
     }
 
-    return this.transformExpense(expense);
+    const board = await this.boardsService.findByIdOrFail(
+      expense.tripId.toString(),
+    );
+    const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
+
+    return this.enrichWithDisplayFx(
+      this.transformExpense(expense),
+      boardCurrency,
+    );
   }
 
   private async assertUserIsBoardParticipant(
@@ -731,10 +784,11 @@ export class ExpensesService implements OnModuleInit {
       }
       if (
         updateExpenseDto.status !== undefined &&
-        updateExpenseDto.status !== expense.status
+        updateExpenseDto.status !== expense.status &&
+        !expense.recurringExpenseId
       ) {
         throw new BadRequestException(
-          'Cambiar el estado de un gasto (settle/pending) solo está disponible en tableros travel',
+          'Cambiar el estado de un gasto solo está disponible en tableros travel o en gastos recurrentes',
         );
       }
     }
@@ -1485,8 +1539,6 @@ export class ExpensesService implements OnModuleInit {
       throw new NotFoundException('Gasto no encontrado');
     }
 
-    await this.boardsService.assertTravelFeatures(expense.tripId.toString());
-
     if (expense.status === ExpenseStatus.PAID) {
       throw new BadRequestException('Este gasto ya está marcado como pagado');
     }
@@ -1522,6 +1574,10 @@ export class ExpensesService implements OnModuleInit {
       .lean();
 
     return this.transformExpense(populatedExpense);
+  }
+
+  async skipRecurringOccurrence(id: string, userId: string): Promise<void> {
+    await this.materializationService.skipExpenseOccurrence(id, userId);
   }
 
   private transformExpense(expense: unknown): Expense {
@@ -1830,6 +1886,39 @@ export class ExpensesService implements OnModuleInit {
 
   private transformExpenses(expenses: any[]): Expense[] {
     return expenses.map((expense) => this.transformExpense(expense));
+  }
+
+  private getPaymentMethodFxContext(
+    expense: Record<string, unknown>,
+  ): PaymentMethodFxContext | null {
+    const detail = expense.paymentMethodDetail as
+      | { kind?: PaymentMethodKind; closingDay?: number }
+      | undefined;
+    if (!detail?.kind) {
+      return null;
+    }
+    return {
+      kind: detail.kind,
+      closingDay: detail.closingDay,
+    };
+  }
+
+  private async enrichWithDisplayFx(
+    expense: Expense,
+    boardCurrency: string,
+  ): Promise<Expense & { displayFx?: ExpenseDisplayFx }> {
+    const displayFx = await this.expenseFxResolver.resolveDisplayFx(
+      expense,
+      boardCurrency,
+      this.getPaymentMethodFxContext(
+        expense as unknown as Record<string, unknown>,
+      ),
+    );
+
+    return {
+      ...expense,
+      ...(displayFx ? { displayFx } : {}),
+    };
   }
 
   private getBudgetAmountForExpense(

@@ -1,19 +1,34 @@
 import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
 import { IncomesService } from '../incomes/incomes.service';
-import { RecurringIncomesService } from '../recurring-incomes/recurring-incomes.service';
-import { RecurringExpensesService } from '../recurring-expenses/recurring-expenses.service';
 import { InstallmentPlansService } from '../installment-plans/installment-plans.service';
-import { getValidDaysInMonth } from '../common/utils/validate-day-of-month';
+import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 import { getInstallmentDueInMonth } from '../common/utils/installment-schedule';
 import {
   getCurrentYearMonth,
+  parseYearMonth,
   shiftYearMonth,
 } from '../common/utils/parse-year-month';
 import { splitInstallmentAmounts } from '../common/utils/split-installment-amounts';
+import { Income, IncomeDocument, IncomeStatus } from '../incomes/income.schema';
+import {
+  Expense,
+  ExpenseDocument,
+  ExpenseStatus,
+} from '../expenses/expense.schema';
+import { getInstallmentAmountInBoardCurrency } from '../common/utils/installment-board-currency';
+import { ExpenseFxResolver } from '../fx/expense-fx.resolver';
+import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import { PaymentMethod } from '../payment-methods/payment-method.schema';
 
 function getDocumentId(doc: unknown): string {
   const record = doc as { _id?: { toString(): string } };
   return record._id?.toString() ?? '';
+}
+
+function getDayFromDate(date: Date): number {
+  return date.getUTCDate();
 }
 
 export interface ForecastLineItem {
@@ -23,10 +38,13 @@ export interface ForecastLineItem {
   currency: string;
   dayOfMonth: number;
   kind: 'recurring-income' | 'recurring-expense' | 'installment';
+  status?: 'pending' | 'confirmed' | 'paid';
   meta?: {
     installmentNumber?: number;
     totalInstallments?: number;
     daysOfMonth?: number[];
+    originalAmount?: number;
+    originalCurrency?: string;
   };
 }
 
@@ -77,9 +95,14 @@ export interface MonthlyForecast {
 export class ForecastService {
   constructor(
     private incomesService: IncomesService,
-    private recurringIncomesService: RecurringIncomesService,
-    private recurringExpensesService: RecurringExpensesService,
     private installmentPlansService: InstallmentPlansService,
+    private materializationService: RecurringMaterializationService,
+    private expenseFxResolver: ExpenseFxResolver,
+    private paymentMethodsService: PaymentMethodsService,
+    @InjectModel(Income.name)
+    private incomeModel: Model<IncomeDocument>,
+    @InjectModel(Expense.name)
+    private expenseModel: Model<ExpenseDocument>,
   ) {}
 
   async getMonthlyForecast(
@@ -87,88 +110,139 @@ export class ForecastService {
     yearMonth: string,
     userId: string,
   ): Promise<MonthlyForecast> {
+    await this.materializationService.ensureHorizon(boardId, userId);
+
     const actualSummary = await this.incomesService.getMonthlySummary(
       boardId,
       yearMonth,
       userId,
     );
 
-    const [recurringIncomes, recurringExpenses, installmentPlans] =
-      await Promise.all([
-        this.recurringIncomesService.findActiveByBoard(boardId, userId),
-        this.recurringExpensesService.findActiveByBoard(boardId, userId),
-        this.installmentPlansService.findActiveByBoard(boardId, userId),
-      ]);
+    const installmentPlans =
+      await this.installmentPlansService.findActiveByBoard(boardId, userId);
+
+    const paymentMethods =
+      await this.paymentMethodsService.findAvailableForBoard(boardId, userId);
+    const paymentMethodMap = new Map(
+      paymentMethods.map((method) => {
+        const record = method as PaymentMethod & { _id: Types.ObjectId };
+        return [record._id.toString(), record];
+      }),
+    );
 
     const boardCurrency = actualSummary.currency;
     const currentYearMonth = getCurrentYearMonth();
     const isFutureMonth = yearMonth > currentYearMonth;
 
+    const { from, toExclusive } = parseYearMonth(yearMonth);
+    const dateFilter = {
+      $gte: new Date(from),
+      $lt: new Date(toExclusive),
+    };
+    const boardObjectId = new Types.ObjectId(boardId);
+
+    const [materializedIncomes, materializedExpenses] = await Promise.all([
+      this.incomeModel
+        .find({
+          tripId: boardObjectId,
+          recurringIncomeId: { $exists: true },
+          incomeDate: dateFilter,
+          skippedAt: { $exists: false },
+        })
+        .lean(),
+      this.expenseModel
+        .find({
+          tripId: boardObjectId,
+          recurringExpenseId: { $exists: true },
+          expenseDate: dateFilter,
+          skippedAt: { $exists: false },
+        })
+        .lean(),
+    ]);
+
     const plannedIncomes: ForecastLineItem[] = [];
     let plannedIncomeTotal = 0;
 
-    for (const income of recurringIncomes) {
+    for (const income of materializedIncomes) {
       if (income.currency !== boardCurrency) continue;
-
-      const validDays = getValidDaysInMonth(income.daysOfMonth, yearMonth);
-      if (validDays.length === 0) continue;
-
-      const amount = income.amount * validDays.length;
-      plannedIncomeTotal += amount;
+      if (income.status !== IncomeStatus.PENDING) continue;
 
       plannedIncomes.push({
         id: getDocumentId(income),
         label: income.label,
-        amount,
+        amount: income.amount,
         currency: income.currency,
-        dayOfMonth: validDays[0],
+        dayOfMonth: getDayFromDate(new Date(income.incomeDate)),
         kind: 'recurring-income',
-        meta: {
-          daysOfMonth: validDays,
-        },
+        status: 'pending',
       });
+
+      plannedIncomeTotal += income.amount;
     }
 
     const plannedFixedExpenses: ForecastLineItem[] = [];
     let plannedFixedTotal = 0;
 
-    for (const expense of recurringExpenses) {
-      if (expense.currency !== boardCurrency) continue;
+    for (const expense of materializedExpenses) {
+      if (expense.status !== ExpenseStatus.PENDING) continue;
 
-      const validDays = getValidDaysInMonth([expense.dayOfMonth], yearMonth);
-      if (validDays.length === 0) continue;
+      const paymentMethodId = expense.paymentMethodId?.toString();
+      const paymentMethod = paymentMethodId
+        ? paymentMethodMap.get(paymentMethodId)
+        : undefined;
 
-      plannedFixedTotal += expense.amount;
+      const amountInBoard =
+        await this.expenseFxResolver.getAmountInBoardCurrency(
+          expense,
+          boardCurrency,
+          paymentMethod
+            ? {
+                kind: paymentMethod.kind,
+                closingDay: paymentMethod.closingDay,
+              }
+            : null,
+        );
+      if (amountInBoard == null) continue;
+
       plannedFixedExpenses.push({
         id: getDocumentId(expense),
-        label: expense.label,
-        amount: expense.amount,
-        currency: expense.currency,
-        dayOfMonth: expense.dayOfMonth,
+        label: expense.description,
+        amount: amountInBoard,
+        currency: boardCurrency,
+        dayOfMonth: getDayFromDate(new Date(expense.expenseDate)),
         kind: 'recurring-expense',
+        status: 'pending',
       });
+
+      plannedFixedTotal += amountInBoard;
     }
 
     const plannedInstallments: ForecastLineItem[] = [];
     let plannedInstallmentTotal = 0;
 
     for (const plan of installmentPlans) {
-      if (plan.currency !== boardCurrency) continue;
-
       const due = getInstallmentDueInMonth(plan, yearMonth);
       if (!due) continue;
 
-      plannedInstallmentTotal += due.amount;
+      const amountInBoard = getInstallmentAmountInBoardCurrency(
+        plan,
+        boardCurrency,
+      );
+      if (amountInBoard == null) continue;
+
+      plannedInstallmentTotal += amountInBoard;
       plannedInstallments.push({
         id: getDocumentId(plan),
         label: plan.label,
-        amount: due.amount,
-        currency: plan.currency,
+        amount: amountInBoard,
+        currency: boardCurrency,
         dayOfMonth: due.dayOfMonth,
         kind: 'installment',
         meta: {
           installmentNumber: due.installmentNumber,
           totalInstallments: plan.totalInstallments,
+          originalAmount: due.amount,
+          originalCurrency: plan.currency,
         },
       });
     }
@@ -201,6 +275,14 @@ export class ForecastService {
         projectedRemaining,
       },
     };
+  }
+
+  async ensureHorizon(boardId: string, userId: string, monthsAhead?: number) {
+    return this.materializationService.ensureHorizon(
+      boardId,
+      userId,
+      monthsAhead,
+    );
   }
 
   async simulateExpense(

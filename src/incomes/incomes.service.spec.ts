@@ -11,6 +11,7 @@ import { Income } from './income.schema';
 import { Expense } from '../expenses/expense.schema';
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
+import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 
 describe('IncomesService', () => {
   let service: IncomesService;
@@ -44,6 +45,10 @@ describe('IncomesService', () => {
     findByIdOrFail: jest.fn(),
   };
 
+  const materializationService = {
+    skipIncomeOccurrence: jest.fn(),
+  };
+
   const mockIncomeDoc = {
     _id: incomeId,
     tripId: boardId,
@@ -64,6 +69,10 @@ describe('IncomesService', () => {
         { provide: getModelToken(Expense.name), useValue: expenseModel },
         { provide: ParticipantsService, useValue: participantsService },
         { provide: BoardsService, useValue: boardsService },
+        {
+          provide: RecurringMaterializationService,
+          useValue: materializationService,
+        },
       ],
     }).compile();
 

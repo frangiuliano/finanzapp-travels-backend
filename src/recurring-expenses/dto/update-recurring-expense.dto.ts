@@ -50,4 +50,16 @@ export class UpdateRecurringExpenseDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsIn(['this_month', 'from_month'])
+  amountChangeScope?: 'this_month' | 'from_month';
+
+  @IsOptional()
+  @IsString()
+  amountChangeYearMonth?: string;
+
+  @IsOptional()
+  @IsString()
+  cancelFromYearMonth?: string;
 }

@@ -1,6 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
+export enum IncomeStatus {
+  PENDING = 'pending',
+  CONFIRMED = 'confirmed',
+}
+
 @Schema({ timestamps: true })
 export class Income {
   @Prop({ type: Types.ObjectId, ref: 'Board', required: true })
@@ -21,6 +26,23 @@ export class Income {
   @Prop({ type: Date, default: Date.now })
   incomeDate: Date;
 
+  @Prop({
+    type: String,
+    enum: IncomeStatus,
+    default: IncomeStatus.CONFIRMED,
+    required: true,
+  })
+  status: IncomeStatus;
+
+  @Prop({ type: Types.ObjectId, ref: 'RecurringIncome', required: false })
+  recurringIncomeId?: Types.ObjectId;
+
+  @Prop({ required: false })
+  occurrenceKey?: string;
+
+  @Prop({ type: Date, required: false })
+  skippedAt?: Date;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 
@@ -37,3 +59,5 @@ export const IncomeSchema = SchemaFactory.createForClass(Income);
 
 IncomeSchema.index({ tripId: 1, incomeDate: -1 });
 IncomeSchema.index({ tripId: 1, createdAt: -1 });
+IncomeSchema.index({ tripId: 1, status: 1, incomeDate: -1 });
+IncomeSchema.index({ occurrenceKey: 1 }, { unique: true, sparse: true });

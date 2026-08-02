@@ -3,7 +3,12 @@ import { getModelToken } from '@nestjs/mongoose';
 import { BadRequestException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { ExpensesService } from './expenses.service';
-import { Expense, ExpenseStatus } from './expense.schema';
+import {
+  Expense,
+  ExpenseFxPolicy,
+  ExpenseFxPurpose,
+  ExpenseStatus,
+} from './expense.schema';
 import { Budget } from '../budgets/budget.schema';
 import { Participant } from '../participants/schemas/participant.schema';
 import { BoardsService } from '../trips/trips.service';
@@ -11,6 +16,8 @@ import { BoardType } from '../trips/board.schema';
 import { CategoriesService } from '../categories/categories.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 import { FxService } from '../fx/fx.service';
+import { ExpenseFxResolver } from '../fx/expense-fx.resolver';
+import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 
 describe('ExpensesService FX snapshot', () => {
   let service: ExpensesService;
@@ -49,23 +56,39 @@ describe('ExpensesService FX snapshot', () => {
     resolveSnapshot: jest.fn(),
   };
 
+  const expenseFxResolver = {
+    buildFxOnCreate: jest.fn(),
+    resolveSpotSnapshot: jest.fn(),
+    resolveDisplayFx: jest.fn(),
+    getAmountInBoardCurrency: jest.fn(),
+  };
+
+  const materializationService = { skipExpenseOccurrence: jest.fn() };
+
+  const baseProviders = [
+    ExpensesService,
+    { provide: getModelToken(Expense.name), useValue: expenseModel },
+    { provide: getModelToken(Budget.name), useValue: budgetModel },
+    {
+      provide: getModelToken(Participant.name),
+      useValue: participantModel,
+    },
+    { provide: BoardsService, useValue: boardsService },
+    { provide: CategoriesService, useValue: categoriesService },
+    { provide: PaymentMethodsService, useValue: paymentMethodsService },
+    { provide: FxService, useValue: fxService },
+    { provide: ExpenseFxResolver, useValue: expenseFxResolver },
+    {
+      provide: RecurringMaterializationService,
+      useValue: materializationService,
+    },
+  ];
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ExpensesService,
-        { provide: getModelToken(Expense.name), useValue: expenseModel },
-        { provide: getModelToken(Budget.name), useValue: budgetModel },
-        {
-          provide: getModelToken(Participant.name),
-          useValue: participantModel,
-        },
-        { provide: BoardsService, useValue: boardsService },
-        { provide: CategoriesService, useValue: categoriesService },
-        { provide: PaymentMethodsService, useValue: paymentMethodsService },
-        { provide: FxService, useValue: fxService },
-      ],
+      providers: baseProviders,
     }).compile();
 
     service = module.get(ExpensesService);
@@ -90,6 +113,8 @@ describe('ExpensesService FX snapshot', () => {
       currency: 'USD',
       fxRateToBoardCurrency: 1200,
       fxCapturedAt: capturedAt,
+      fxPolicy: ExpenseFxPolicy.SPOT,
+      fxPurpose: ExpenseFxPurpose.SETTLED,
       ...savedOverrides,
     };
 
@@ -115,12 +140,25 @@ describe('ExpensesService FX snapshot', () => {
       }),
     });
 
+    expenseFxResolver.getAmountInBoardCurrency.mockResolvedValue(12000);
+    expenseFxResolver.resolveDisplayFx.mockResolvedValue({
+      rate: 1200,
+      amountInBoardCurrency: 12000,
+      purpose: ExpenseFxPurpose.SETTLED,
+      isLive: false,
+      boardCurrency: 'ARS',
+    });
+
     return { ExpenseModelCtor, saved, capturedAt };
   }
 
   it('should persist FX snapshot when expense currency differs from board', async () => {
     const capturedAt = new Date('2026-07-01T12:00:00.000Z');
-    fxService.resolveSnapshot.mockResolvedValue({
+    expenseFxResolver.buildFxOnCreate.mockReturnValue({
+      fxPolicy: ExpenseFxPolicy.SPOT,
+      fxPurpose: ExpenseFxPurpose.SETTLED,
+    });
+    expenseFxResolver.resolveSpotSnapshot.mockResolvedValue({
       fxRateToBoardCurrency: 1200,
       fxCapturedAt: capturedAt,
     });
@@ -129,17 +167,9 @@ describe('ExpensesService FX snapshot', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        ExpensesService,
+        ...baseProviders.slice(0, 1),
         { provide: getModelToken(Expense.name), useValue: ExpenseModelCtor },
-        { provide: getModelToken(Budget.name), useValue: budgetModel },
-        {
-          provide: getModelToken(Participant.name),
-          useValue: participantModel,
-        },
-        { provide: BoardsService, useValue: boardsService },
-        { provide: CategoriesService, useValue: categoriesService },
-        { provide: PaymentMethodsService, useValue: paymentMethodsService },
-        { provide: FxService, useValue: fxService },
+        ...baseProviders.slice(2),
       ],
     }).compile();
 
@@ -154,7 +184,7 @@ describe('ExpensesService FX snapshot', () => {
       userId,
     );
 
-    expect(fxService.resolveSnapshot).toHaveBeenCalledWith(
+    expect(expenseFxResolver.resolveSpotSnapshot).toHaveBeenCalledWith(
       'USD',
       'ARS',
       undefined,
@@ -164,12 +194,18 @@ describe('ExpensesService FX snapshot', () => {
         currency: 'USD',
         fxRateToBoardCurrency: 1200,
         fxCapturedAt: capturedAt,
+        fxPolicy: ExpenseFxPolicy.SPOT,
+        fxPurpose: ExpenseFxPurpose.SETTLED,
       }),
     );
   });
 
-  it('should pass fxRateOverride to FX service', async () => {
-    fxService.resolveSnapshot.mockResolvedValue({
+  it('should pass fxRateOverride to spot snapshot resolver', async () => {
+    expenseFxResolver.buildFxOnCreate.mockReturnValue({
+      fxPolicy: ExpenseFxPolicy.SPOT,
+      fxPurpose: ExpenseFxPurpose.SETTLED,
+    });
+    expenseFxResolver.resolveSpotSnapshot.mockResolvedValue({
       fxRateToBoardCurrency: 999,
       fxCapturedAt: new Date(),
     });
@@ -180,17 +216,9 @@ describe('ExpensesService FX snapshot', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        ExpensesService,
+        ...baseProviders.slice(0, 1),
         { provide: getModelToken(Expense.name), useValue: ExpenseModelCtor },
-        { provide: getModelToken(Budget.name), useValue: budgetModel },
-        {
-          provide: getModelToken(Participant.name),
-          useValue: participantModel,
-        },
-        { provide: BoardsService, useValue: boardsService },
-        { provide: CategoriesService, useValue: categoriesService },
-        { provide: PaymentMethodsService, useValue: paymentMethodsService },
-        { provide: FxService, useValue: fxService },
+        ...baseProviders.slice(2),
       ],
     }).compile();
 
@@ -206,7 +234,11 @@ describe('ExpensesService FX snapshot', () => {
       userId,
     );
 
-    expect(fxService.resolveSnapshot).toHaveBeenCalledWith('USD', 'ARS', 999);
+    expect(expenseFxResolver.resolveSpotSnapshot).toHaveBeenCalledWith(
+      'USD',
+      'ARS',
+      999,
+    );
   });
 
   it('should reject cross-currency expense when FX cannot be resolved', async () => {
@@ -216,9 +248,13 @@ describe('ExpensesService FX snapshot', () => {
       baseCurrency: 'ARS',
     });
     participantModel.findOne.mockResolvedValue({ _id: participantId });
-    fxService.resolveSnapshot.mockRejectedValue(
+    expenseFxResolver.buildFxOnCreate.mockReturnValue({
+      fxPolicy: ExpenseFxPolicy.SPOT,
+      fxPurpose: ExpenseFxPurpose.SETTLED,
+    });
+    expenseFxResolver.resolveSpotSnapshot.mockRejectedValue(
       new BadRequestException(
-        'Tipo de cambio requerido: configura FX_API_KEY o envía fxRateOverride al crear el gasto',
+        'Tipo de cambio requerido: para USD/ARS se usa DolarApi automáticamente; para otras monedas enviá fxRateOverride o configurá FX_API_KEY.',
       ),
     );
 

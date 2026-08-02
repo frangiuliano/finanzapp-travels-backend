@@ -71,4 +71,27 @@ export class ForecastController {
 
     return { simulation };
   }
+
+  @Post('ensure-horizon')
+  async ensureHorizon(
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+    @Query('tripId') tripId?: string,
+    @Query('monthsAhead') monthsAhead?: string,
+  ) {
+    const resolvedBoardId = boardId || tripId;
+    if (!resolvedBoardId) {
+      throw new BadRequestException('boardId o tripId es requerido');
+    }
+
+    const parsedMonths = monthsAhead ? Number(monthsAhead) : undefined;
+
+    const result = await this.forecastService.ensureHorizon(
+      resolvedBoardId,
+      user._id.toString(),
+      parsedMonths,
+    );
+
+    return { message: 'Horizonte de planificación actualizado', ...result };
+  }
 }

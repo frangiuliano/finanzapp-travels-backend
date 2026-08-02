@@ -24,6 +24,10 @@ export class RecurringIncome {
   @Prop({ default: true })
   isActive: boolean;
 
+  /** When set, no occurrences are generated from this month onward */
+  @Prop({ required: false, match: /^\d{4}-(0[1-9]|1[0-2])$/ })
+  inactiveFromYearMonth?: string;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 }

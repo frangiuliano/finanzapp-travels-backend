@@ -31,6 +31,13 @@ export class InstallmentPlan {
   @Prop({ required: true, default: 'USD' })
   currency: string;
 
+  /** 1 unit of currency = fxRateToBoardCurrency in board.baseCurrency */
+  @Prop({ required: false, min: 0 })
+  fxRateToBoardCurrency?: number;
+
+  @Prop({ type: Date, required: false })
+  fxCapturedAt?: Date;
+
   @Prop({ default: true })
   isActive: boolean;
 

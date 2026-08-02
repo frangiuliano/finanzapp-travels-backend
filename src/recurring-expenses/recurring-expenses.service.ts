@@ -10,6 +10,10 @@ import {
   RecurringExpense,
   RecurringExpenseDocument,
 } from './recurring-expense.schema';
+import {
+  RecurringExpenseVersion,
+  RecurringExpenseVersionDocument,
+} from './recurring-expense-version.schema';
 import { CreateRecurringExpenseDto } from './dto/create-recurring-expense.dto';
 import { UpdateRecurringExpenseDto } from './dto/update-recurring-expense.dto';
 import { ParticipantsService } from '../participants/participants.service';
@@ -17,6 +21,8 @@ import { BoardsService } from '../trips/trips.service';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { assertValidDayOfMonth } from '../common/utils/validate-day-of-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
+import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
+import { getCurrentYearMonth } from '../common/utils/parse-year-month';
 
 @Injectable()
 export class RecurringExpensesService {
@@ -25,8 +31,11 @@ export class RecurringExpensesService {
   constructor(
     @InjectModel(RecurringExpense.name)
     private recurringExpenseModel: Model<RecurringExpenseDocument>,
+    @InjectModel(RecurringExpenseVersion.name)
+    private recurringExpenseVersionModel: Model<RecurringExpenseVersionDocument>,
     private participantsService: ParticipantsService,
     private boardsService: BoardsService,
+    private materializationService: RecurringMaterializationService,
   ) {}
 
   async create(
@@ -60,6 +69,16 @@ export class RecurringExpensesService {
     });
 
     const saved = await recurringExpense.save();
+
+    await this.recurringExpenseVersionModel.create({
+      recurringExpenseId: saved._id,
+      amount: createDto.amount,
+      effectiveFrom: getCurrentYearMonth(),
+      createdBy: new Types.ObjectId(userId),
+    });
+
+    await this.materializationService.ensureHorizon(boardId, userId);
+
     this.logger.log(
       `Recurring expense created: ${saved._id.toString()} on board ${boardId}`,
     );
@@ -113,12 +132,31 @@ export class RecurringExpensesService {
       throw new NotFoundException('Gasto fijo no encontrado');
     }
 
-    await this.participantsService.ensureParticipantAccess(
-      item.tripId.toString(),
-      userId,
-    );
+    const boardId = item.tripId.toString();
+    await this.participantsService.ensureParticipantAccess(boardId, userId);
 
-    if (updateDto.amount !== undefined) item.amount = updateDto.amount;
+    if (updateDto.cancelFromYearMonth) {
+      await this.materializationService.cancelExpenseFromMonth(
+        id,
+        updateDto.cancelFromYearMonth,
+        userId,
+      );
+    }
+
+    if (updateDto.amount !== undefined) {
+      const scope = updateDto.amountChangeScope ?? 'from_month';
+      const yearMonth =
+        updateDto.amountChangeYearMonth ?? getCurrentYearMonth();
+
+      await this.materializationService.applyExpenseAmountChange(
+        id,
+        updateDto.amount,
+        scope,
+        yearMonth,
+        userId,
+      );
+    }
+
     if (updateDto.currency !== undefined) item.currency = updateDto.currency;
     if (updateDto.label !== undefined) item.label = updateDto.label.trim();
     if (updateDto.description !== undefined) {
@@ -141,6 +179,9 @@ export class RecurringExpensesService {
     if (updateDto.isActive !== undefined) item.isActive = updateDto.isActive;
 
     const saved = await item.save();
+
+    await this.materializationService.ensureHorizon(boardId, userId);
+
     this.logger.log(`Recurring expense updated: ${id}`);
     return saved;
   }
@@ -156,6 +197,7 @@ export class RecurringExpensesService {
       userId,
     );
 
+    await this.materializationService.deleteRuleOccurrences(null, id);
     await this.recurringExpenseModel.findByIdAndDelete(id);
     this.logger.log(`Recurring expense deleted: ${id}`);
   }

@@ -44,4 +44,18 @@ export class UpdateRecurringIncomeDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  /** When changing amount: apply only to amountChangeYearMonth or from that month */
+  @IsOptional()
+  @IsIn(['this_month', 'from_month'])
+  amountChangeScope?: 'this_month' | 'from_month';
+
+  @IsOptional()
+  @IsString()
+  amountChangeYearMonth?: string;
+
+  /** Stop generating occurrences from this month (YYYY-MM) */
+  @IsOptional()
+  @IsString()
+  cancelFromYearMonth?: string;
 }

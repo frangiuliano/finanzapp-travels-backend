@@ -18,6 +18,7 @@ import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { assertValidDayOfMonth } from '../common/utils/validate-day-of-month';
 import { parseYearMonth } from '../common/utils/parse-year-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
+import { FxService } from '../fx/fx.service';
 
 @Injectable()
 export class InstallmentPlansService {
@@ -28,6 +29,7 @@ export class InstallmentPlansService {
     private installmentPlanModel: Model<InstallmentPlanDocument>,
     private participantsService: ParticipantsService,
     private boardsService: BoardsService,
+    private fxService: FxService,
   ) {}
 
   async create(
@@ -50,6 +52,14 @@ export class InstallmentPlansService {
 
     await this.participantsService.ensureParticipantAccess(boardId, userId);
     const board = await this.boardsService.findByIdOrFail(boardId);
+    const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
+    const currency = createDto.currency ?? boardCurrency;
+
+    const fxSnapshot = await this.fxService.resolveSnapshot(
+      currency,
+      boardCurrency,
+      createDto.fxRateOverride,
+    );
 
     const plan = new this.installmentPlanModel({
       tripId: new Types.ObjectId(boardId),
@@ -62,7 +72,13 @@ export class InstallmentPlansService {
       paymentMethodId: createDto.paymentMethodId
         ? new Types.ObjectId(createDto.paymentMethodId)
         : undefined,
-      currency: createDto.currency ?? board.baseCurrency ?? DEFAULT_CURRENCY,
+      currency,
+      fxRateToBoardCurrency:
+        currency === boardCurrency
+          ? undefined
+          : fxSnapshot.fxRateToBoardCurrency,
+      fxCapturedAt:
+        currency === boardCurrency ? undefined : fxSnapshot.fxCapturedAt,
       createdBy: new Types.ObjectId(userId),
     });
 

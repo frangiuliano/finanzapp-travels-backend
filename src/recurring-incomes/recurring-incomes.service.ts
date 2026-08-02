@@ -5,6 +5,10 @@ import {
   RecurringIncome,
   RecurringIncomeDocument,
 } from './recurring-income.schema';
+import {
+  RecurringIncomeVersion,
+  RecurringIncomeVersionDocument,
+} from './recurring-income-version.schema';
 import { CreateRecurringIncomeDto } from './dto/create-recurring-income.dto';
 import { UpdateRecurringIncomeDto } from './dto/update-recurring-income.dto';
 import { ParticipantsService } from '../participants/participants.service';
@@ -12,6 +16,8 @@ import { BoardsService } from '../trips/trips.service';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { normalizeDaysOfMonth } from '../common/utils/validate-day-of-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
+import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
+import { getCurrentYearMonth } from '../common/utils/parse-year-month';
 
 @Injectable()
 export class RecurringIncomesService {
@@ -20,8 +26,11 @@ export class RecurringIncomesService {
   constructor(
     @InjectModel(RecurringIncome.name)
     private recurringIncomeModel: Model<RecurringIncomeDocument>,
+    @InjectModel(RecurringIncomeVersion.name)
+    private recurringIncomeVersionModel: Model<RecurringIncomeVersionDocument>,
     private participantsService: ParticipantsService,
     private boardsService: BoardsService,
+    private materializationService: RecurringMaterializationService,
   ) {}
 
   async create(
@@ -47,6 +56,16 @@ export class RecurringIncomesService {
     });
 
     const saved = await recurringIncome.save();
+
+    await this.recurringIncomeVersionModel.create({
+      recurringIncomeId: saved._id,
+      amount: createDto.amount,
+      effectiveFrom: getCurrentYearMonth(),
+      createdBy: new Types.ObjectId(userId),
+    });
+
+    await this.materializationService.ensureHorizon(boardId, userId);
+
     this.logger.log(
       `Recurring income created: ${saved._id.toString()} on board ${boardId}`,
     );
@@ -100,12 +119,31 @@ export class RecurringIncomesService {
       throw new NotFoundException('Ingreso recurrente no encontrado');
     }
 
-    await this.participantsService.ensureParticipantAccess(
-      item.tripId.toString(),
-      userId,
-    );
+    const boardId = item.tripId.toString();
+    await this.participantsService.ensureParticipantAccess(boardId, userId);
 
-    if (updateDto.amount !== undefined) item.amount = updateDto.amount;
+    if (updateDto.cancelFromYearMonth) {
+      await this.materializationService.cancelIncomeFromMonth(
+        id,
+        updateDto.cancelFromYearMonth,
+        userId,
+      );
+    }
+
+    if (updateDto.amount !== undefined) {
+      const scope = updateDto.amountChangeScope ?? 'from_month';
+      const yearMonth =
+        updateDto.amountChangeYearMonth ?? getCurrentYearMonth();
+
+      await this.materializationService.applyIncomeAmountChange(
+        id,
+        updateDto.amount,
+        scope,
+        yearMonth,
+        userId,
+      );
+    }
+
     if (updateDto.currency !== undefined) item.currency = updateDto.currency;
     if (updateDto.label !== undefined) item.label = updateDto.label.trim();
     if (updateDto.description !== undefined) {
@@ -117,6 +155,9 @@ export class RecurringIncomesService {
     if (updateDto.isActive !== undefined) item.isActive = updateDto.isActive;
 
     const saved = await item.save();
+
+    await this.materializationService.ensureHorizon(boardId, userId);
+
     this.logger.log(`Recurring income updated: ${id}`);
     return saved;
   }
@@ -132,6 +173,7 @@ export class RecurringIncomesService {
       userId,
     );
 
+    await this.materializationService.deleteRuleOccurrences(id, null);
     await this.recurringIncomeModel.findByIdAndDelete(id);
     this.logger.log(`Recurring income deleted: ${id}`);
   }

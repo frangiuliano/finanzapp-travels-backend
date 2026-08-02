@@ -6,6 +6,7 @@ import { Income, IncomeSchema } from './income.schema';
 import { Expense, ExpenseSchema } from '../expenses/expense.schema';
 import { ParticipantsModule } from '../participants/participants.module';
 import { BoardsModule } from '../trips/trips.module';
+import { RecurringMaterializationModule } from '../recurring-materialization/recurring-materialization.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { BoardsModule } from '../trips/trips.module';
     ]),
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BoardsModule),
+    RecurringMaterializationModule,
   ],
   controllers: [IncomesController],
   providers: [IncomesService],

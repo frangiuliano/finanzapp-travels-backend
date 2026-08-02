@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { ExpensesService } from './expenses.service';
 import { Expense, ExpenseStatus } from './expense.schema';
@@ -11,6 +11,8 @@ import { BoardType } from '../trips/board.schema';
 import { CategoriesService } from '../categories/categories.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 import { FxService } from '../fx/fx.service';
+import { ExpenseFxResolver } from '../fx/expense-fx.resolver';
+import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 
 describe('ExpensesService board gates', () => {
   let service: ExpensesService;
@@ -55,6 +57,20 @@ describe('ExpensesService board gates', () => {
     }),
   };
 
+  const expenseFxResolver = {
+    buildFxOnCreate: jest.fn().mockReturnValue(null),
+    resolveSpotSnapshot: jest.fn().mockResolvedValue({
+      fxRateToBoardCurrency: 1,
+      fxCapturedAt: new Date(),
+    }),
+    resolveDisplayFx: jest.fn().mockResolvedValue(null),
+    getAmountInBoardCurrency: jest.fn().mockResolvedValue(null),
+  };
+
+  const materializationService = {
+    skipExpenseOccurrence: jest.fn(),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -71,6 +87,11 @@ describe('ExpensesService board gates', () => {
         { provide: CategoriesService, useValue: categoriesService },
         { provide: PaymentMethodsService, useValue: paymentMethodsService },
         { provide: FxService, useValue: fxService },
+        { provide: ExpenseFxResolver, useValue: expenseFxResolver },
+        {
+          provide: RecurringMaterializationService,
+          useValue: materializationService,
+        },
       ],
     }).compile();
 
@@ -98,26 +119,81 @@ describe('ExpensesService board gates', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('should reject pending status on everyday boards', async () => {
+    it('should allow pending status on everyday boards', async () => {
       boardsService.findByIdOrFail.mockResolvedValue({
         _id: boardId,
         type: BoardType.EVERYDAY,
+        baseCurrency: 'USD',
       });
-      participantModel.findOne
-        .mockResolvedValueOnce({ _id: participantId })
-        .mockResolvedValueOnce({ _id: participantId });
+      participantModel.findOne.mockResolvedValue({ _id: participantId });
+      participantModel.find.mockResolvedValue([{ _id: participantId }]);
+      paymentMethodsService.findAvailableForBoard.mockResolvedValue([]);
 
-      await expect(
-        service.create(
+      const saved = {
+        _id: expenseId,
+        description: 'Netflix',
+        amount: 10,
+        currency: 'USD',
+      };
+      const expenseInstance = {
+        save: jest.fn().mockResolvedValue(saved),
+      };
+      const ExpenseModelCtor = jest
+        .fn()
+        .mockImplementation(() => expenseInstance);
+      Object.assign(ExpenseModelCtor, expenseModel);
+      expenseModel.findById.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({
+          ...saved,
+          tripId: boardId,
+          paidByParticipantId: participantId,
+          createdBy: new Types.ObjectId(userId),
+          isDivisible: false,
+          status: ExpenseStatus.PENDING,
+          expenseDate: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      });
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          ExpensesService,
+          { provide: getModelToken(Expense.name), useValue: ExpenseModelCtor },
+          { provide: getModelToken(Budget.name), useValue: budgetModel },
           {
-            boardId: boardId.toString(),
-            amount: 10,
-            description: 'Cafe',
-            status: ExpenseStatus.PENDING,
+            provide: getModelToken(Participant.name),
+            useValue: participantModel,
           },
-          userId,
-        ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+          { provide: BoardsService, useValue: boardsService },
+          { provide: CategoriesService, useValue: categoriesService },
+          { provide: PaymentMethodsService, useValue: paymentMethodsService },
+          { provide: FxService, useValue: fxService },
+          { provide: ExpenseFxResolver, useValue: expenseFxResolver },
+          {
+            provide: RecurringMaterializationService,
+            useValue: materializationService,
+          },
+        ],
+      }).compile();
+
+      const expensesService = module.get(ExpensesService);
+      await expensesService.create(
+        {
+          boardId: boardId.toString(),
+          amount: 10,
+          description: 'Netflix',
+          status: ExpenseStatus.PENDING,
+        },
+        userId,
+      );
+
+      expect(ExpenseModelCtor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: ExpenseStatus.PENDING,
+        }),
+      );
     });
 
     it('should create everyday expense without paidBy (defaults to creator)', async () => {
@@ -172,6 +248,11 @@ describe('ExpensesService board gates', () => {
           { provide: CategoriesService, useValue: categoriesService },
           { provide: PaymentMethodsService, useValue: paymentMethodsService },
           { provide: FxService, useValue: fxService },
+          { provide: ExpenseFxResolver, useValue: expenseFxResolver },
+          {
+            provide: RecurringMaterializationService,
+            useValue: materializationService,
+          },
         ],
       }).compile();
 
@@ -264,19 +345,40 @@ describe('ExpensesService board gates', () => {
   });
 
   describe('settleExpense', () => {
-    it('should reject settle on everyday boards', async () => {
-      expenseModel.findById.mockResolvedValue({
+    it('should settle pending recurring expense on everyday boards', async () => {
+      const pendingExpense = {
         _id: expenseId,
         tripId: boardId,
         status: ExpenseStatus.PENDING,
-      });
-      boardsService.assertTravelFeatures.mockRejectedValue(
-        new ForbiddenException('travel only'),
-      );
+        save: jest.fn().mockImplementation(function (this: {
+          status: ExpenseStatus;
+        }) {
+          this.status = ExpenseStatus.PAID;
+          return Promise.resolve(this);
+        }),
+      };
+      expenseModel.findById
+        .mockResolvedValueOnce(pendingExpense)
+        .mockReturnValue({
+          populate: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue({
+            _id: expenseId,
+            tripId: boardId,
+            status: ExpenseStatus.PAID,
+            paidByParticipantId: participantId,
+            createdBy: new Types.ObjectId(userId),
+            isDivisible: false,
+            expenseDate: new Date(),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }),
+        });
+      participantModel.findOne.mockResolvedValue({ _id: participantId });
 
-      await expect(
-        service.settleExpense(expenseId.toString(), userId),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      const result = await service.settleExpense(expenseId.toString(), userId);
+
+      expect(pendingExpense.save).toHaveBeenCalled();
+      expect(result.status).toBe(ExpenseStatus.PAID);
     });
   });
 });

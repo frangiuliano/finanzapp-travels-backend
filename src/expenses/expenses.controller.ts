@@ -194,4 +194,14 @@ export class ExpensesController {
       expense,
     };
   }
+
+  @Post(':id/skip')
+  @HttpCode(HttpStatus.OK)
+  async skipRecurringOccurrence(
+    @Param('id') id: string,
+    @GetUser('_id') userId: string,
+  ) {
+    await this.expensesService.skipRecurringOccurrence(id, userId);
+    return { message: 'Gasto omitido para este mes' };
+  }
 }
