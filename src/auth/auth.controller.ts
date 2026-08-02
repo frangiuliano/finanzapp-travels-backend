@@ -7,11 +7,13 @@ import {
   UseGuards,
   Get,
   Param,
+  Query,
   Patch,
   Res,
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
@@ -42,7 +44,16 @@ const getRefreshTokenCookieOptions = (): {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  private getFrontendUrl(): string {
+    return (
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173'
+    ).replace(/\/$/, '');
+  }
 
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60000 } })
@@ -143,10 +154,27 @@ export class AuthController {
 
   @Public()
   @Get('verify-email/:token')
-  @HttpCode(HttpStatus.OK)
-  async verifyEmail(@Param('token') token: string) {
-    await this.authService.verifyEmail(token);
-    return { message: 'Email verificado exitosamente' };
+  async verifyEmail(
+    @Param('token') token: string,
+    @Res() res: Response,
+    @Query('source') source?: string,
+  ) {
+    const frontendUrl = this.getFrontendUrl();
+
+    try {
+      await this.authService.verifyEmail(token);
+      if (source === 'email') {
+        return res.redirect(302, `${frontendUrl}/login?verified=1`);
+      }
+      return res
+        .status(HttpStatus.OK)
+        .json({ message: 'Email verificado exitosamente' });
+    } catch (error) {
+      if (source === 'email') {
+        return res.redirect(302, `${frontendUrl}/login?verified=0`);
+      }
+      throw error;
+    }
   }
 
   @UseGuards(JwtAuthGuard)

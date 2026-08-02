@@ -14,10 +14,23 @@ export class NotificationsService {
     this.frontendUrl = this.configService.get<string>('FRONTEND_URL') || '';
   }
 
+  private getApiPublicBaseUrl(): string {
+    const configured = this.configService.get<string>('API_PUBLIC_URL');
+    if (configured) {
+      return configured.replace(/\/$/, '');
+    }
+
+    const webhookUrl = this.configService.get<string>('WEBHOOK_URL') || '';
+    if (webhookUrl.includes('/api/')) {
+      return webhookUrl.replace(/\/api\/.*$/, '/api');
+    }
+
+    return 'https://finanzapp-travels-backend.fly.dev/api';
+  }
+
   async sendVerificationEmail(email: string, token: string): Promise<void> {
     try {
-      const frontendUrl = this.configService.get<string>('FRONTEND_URL') || '';
-      const verificationUrl = `${frontendUrl}/auth/verify-email/${token}`;
+      const verificationUrl = `${this.getApiPublicBaseUrl()}/auth/verify-email/${token}?source=email`;
       const currentYear = new Date().getFullYear();
 
       await this.mailerService.sendMail({
