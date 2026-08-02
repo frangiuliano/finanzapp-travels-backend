@@ -36,6 +36,7 @@ describe('CardsService', () => {
         lastFourDigits: '4242',
         brand: CardType.VISA,
         isActive: true,
+        isDefault: false,
       } as PaymentMethod,
     ]);
 
