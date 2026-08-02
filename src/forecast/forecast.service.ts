@@ -5,6 +5,11 @@ import { RecurringExpensesService } from '../recurring-expenses/recurring-expens
 import { InstallmentPlansService } from '../installment-plans/installment-plans.service';
 import { getValidDaysInMonth } from '../common/utils/validate-day-of-month';
 import { getInstallmentDueInMonth } from '../common/utils/installment-schedule';
+import {
+  getCurrentYearMonth,
+  shiftYearMonth,
+} from '../common/utils/parse-year-month';
+import { splitInstallmentAmounts } from '../common/utils/split-installment-amounts';
 
 function getDocumentId(doc: unknown): string {
   const record = doc as { _id?: { toString(): string } };
@@ -22,6 +27,29 @@ export interface ForecastLineItem {
     installmentNumber?: number;
     totalInstallments?: number;
     daysOfMonth?: number[];
+  };
+}
+
+export interface SimulatedExpenseMonth {
+  yearMonth: string;
+  installmentNumber: number;
+  simulatedExpense: number;
+  baselineRemaining: number;
+  projectedRemaining: number;
+  isFutureMonth: boolean;
+}
+
+export interface ExpenseSimulationResult {
+  label: string;
+  totalAmount: number;
+  installments: number;
+  startYearMonth: string;
+  currency: string;
+  months: SimulatedExpenseMonth[];
+  summary: {
+    tightestYearMonth: string;
+    lowestProjectedRemaining: number;
+    goesNegative: boolean;
   };
 }
 
@@ -73,7 +101,7 @@ export class ForecastService {
       ]);
 
     const boardCurrency = actualSummary.currency;
-    const currentYearMonth = this.getCurrentYearMonth();
+    const currentYearMonth = getCurrentYearMonth();
     const isFutureMonth = yearMonth > currentYearMonth;
 
     const plannedIncomes: ForecastLineItem[] = [];
@@ -175,10 +203,68 @@ export class ForecastService {
     };
   }
 
-  private getCurrentYearMonth(): string {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    return `${year}-${month}`;
+  async simulateExpense(
+    boardId: string,
+    userId: string,
+    input: {
+      label: string;
+      totalAmount: number;
+      installments?: number;
+      startYearMonth?: string;
+    },
+  ): Promise<ExpenseSimulationResult> {
+    const installments = input.installments ?? 1;
+    const startYearMonth = input.startYearMonth ?? getCurrentYearMonth();
+    const installmentAmounts = splitInstallmentAmounts(
+      input.totalAmount,
+      installments,
+    );
+
+    const months: SimulatedExpenseMonth[] = [];
+    let tightestYearMonth = startYearMonth;
+    let lowestProjectedRemaining = Number.POSITIVE_INFINITY;
+    let currency = 'USD';
+
+    for (let index = 0; index < installments; index++) {
+      const yearMonth = shiftYearMonth(startYearMonth, index);
+      const forecast = await this.getMonthlyForecast(
+        boardId,
+        yearMonth,
+        userId,
+      );
+      currency = forecast.currency;
+
+      const simulatedExpense = installmentAmounts[index];
+      const baselineRemaining = forecast.planned.projectedRemaining;
+      const projectedRemaining = baselineRemaining - simulatedExpense;
+
+      months.push({
+        yearMonth,
+        installmentNumber: index + 1,
+        simulatedExpense,
+        baselineRemaining,
+        projectedRemaining,
+        isFutureMonth: forecast.isFutureMonth,
+      });
+
+      if (projectedRemaining < lowestProjectedRemaining) {
+        lowestProjectedRemaining = projectedRemaining;
+        tightestYearMonth = yearMonth;
+      }
+    }
+
+    return {
+      label: input.label.trim(),
+      totalAmount: input.totalAmount,
+      installments,
+      startYearMonth,
+      currency,
+      months,
+      summary: {
+        tightestYearMonth,
+        lowestProjectedRemaining,
+        goesNegative: lowestProjectedRemaining < 0,
+      },
+    };
   }
 }

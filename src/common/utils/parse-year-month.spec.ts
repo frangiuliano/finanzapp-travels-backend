@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
-import { parseYearMonth } from './parse-year-month';
+import {
+  getCurrentYearMonth,
+  parseYearMonth,
+  shiftYearMonth,
+} from './parse-year-month';
 
 describe('parseYearMonth', () => {
   it('should parse a valid year-month', () => {
@@ -22,5 +26,25 @@ describe('parseYearMonth', () => {
 
   it('should reject malformed input', () => {
     expect(() => parseYearMonth('202607')).toThrow(BadRequestException);
+  });
+});
+
+describe('shiftYearMonth', () => {
+  it('should shift forward within the same year', () => {
+    expect(shiftYearMonth('2026-07', 2)).toBe('2026-09');
+  });
+
+  it('should roll over to the next year', () => {
+    expect(shiftYearMonth('2026-11', 2)).toBe('2027-01');
+  });
+
+  it('should shift backward across years', () => {
+    expect(shiftYearMonth('2026-01', -1)).toBe('2025-12');
+  });
+});
+
+describe('getCurrentYearMonth', () => {
+  it('should format year and month', () => {
+    expect(getCurrentYearMonth(new Date(2026, 7, 15))).toBe('2026-08');
   });
 });

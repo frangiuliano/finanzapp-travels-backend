@@ -27,3 +27,15 @@ export function parseYearMonth(yearMonth: string): YearMonthRange {
   const nextMonth = String(month + 1).padStart(2, '0');
   return { from, toExclusive: `${year}-${nextMonth}-01` };
 }
+
+export function getCurrentYearMonth(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+export function shiftYearMonth(yearMonth: string, deltaMonths: number): string {
+  const [yearStr, monthStr] = yearMonth.split('-');
+  const date = new Date(Number(yearStr), Number(monthStr) - 1 + deltaMonths, 1);
+  return getCurrentYearMonth(date);
+}
