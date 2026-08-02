@@ -164,14 +164,14 @@ export class AuthController {
     try {
       await this.authService.verifyEmail(token);
       if (source === 'email') {
-        return res.redirect(302, `${frontendUrl}/login?verified=1`);
+        return res.redirect(302, `${frontendUrl}/verify-email?status=success`);
       }
       return res
         .status(HttpStatus.OK)
         .json({ message: 'Email verificado exitosamente' });
     } catch (error) {
       if (source === 'email') {
-        return res.redirect(302, `${frontendUrl}/login?verified=0`);
+        return res.redirect(302, `${frontendUrl}/verify-email?status=error`);
       }
       throw error;
     }
