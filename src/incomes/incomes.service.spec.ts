@@ -12,6 +12,7 @@ import { Expense } from '../expenses/expense.schema';
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
+import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 
 describe('IncomesService', () => {
   let service: IncomesService;
@@ -49,6 +50,10 @@ describe('IncomesService', () => {
     skipIncomeOccurrence: jest.fn(),
   };
 
+  const paymentMethodsService = {
+    findAvailableForBoard: jest.fn(),
+  };
+
   const mockIncomeDoc = {
     _id: incomeId,
     tripId: boardId,
@@ -73,6 +78,10 @@ describe('IncomesService', () => {
           provide: RecurringMaterializationService,
           useValue: materializationService,
         },
+        {
+          provide: PaymentMethodsService,
+          useValue: paymentMethodsService,
+        },
       ],
     }).compile();
 
@@ -82,6 +91,7 @@ describe('IncomesService', () => {
       _id: boardId,
       baseCurrency: 'ARS',
     });
+    paymentMethodsService.findAvailableForBoard.mockResolvedValue([]);
   });
 
   describe('create', () => {

@@ -26,6 +26,7 @@ export class ForecastController {
     @Query('yearMonth') yearMonth: string,
     @GetUser() user: UserDocument,
     @Query('tripId') tripId?: string,
+    @Query('attribution') attribution?: string,
   ) {
     const resolvedBoardId = boardId || tripId;
     if (!resolvedBoardId) {
@@ -35,10 +36,14 @@ export class ForecastController {
       throw new BadRequestException('yearMonth es requerido (formato YYYY-MM)');
     }
 
+    const attributionMode =
+      attribution === 'cash_impact' ? 'cash_impact' : 'calendar';
+
     const forecast = await this.forecastService.getMonthlyForecast(
       resolvedBoardId,
       yearMonth,
       user._id.toString(),
+      attributionMode,
     );
 
     return { forecast };

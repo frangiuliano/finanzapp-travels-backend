@@ -21,6 +21,10 @@ import { getInstallmentAmountInBoardCurrency } from '../common/utils/installment
 import { ExpenseFxResolver } from '../fx/expense-fx.resolver';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 import { PaymentMethod } from '../payment-methods/payment-method.schema';
+import {
+  type ExpenseAttributionMode,
+  expenseBelongsToYearMonth,
+} from '../common/utils/expense-month-attribution';
 
 function getDocumentId(doc: unknown): string {
   const record = doc as { _id?: { toString(): string } };
@@ -75,6 +79,7 @@ export interface MonthlyForecast {
   boardId: string;
   yearMonth: string;
   currency: string;
+  attributionMode: ExpenseAttributionMode;
   isFutureMonth: boolean;
   actual: {
     totalIncomes: number;
@@ -109,6 +114,7 @@ export class ForecastService {
     boardId: string,
     yearMonth: string,
     userId: string,
+    attributionMode: ExpenseAttributionMode = 'calendar',
   ): Promise<MonthlyForecast> {
     await this.materializationService.ensureHorizon(boardId, userId);
 
@@ -116,6 +122,7 @@ export class ForecastService {
       boardId,
       yearMonth,
       userId,
+      attributionMode,
     );
 
     const installmentPlans =
@@ -126,7 +133,10 @@ export class ForecastService {
     const paymentMethodMap = new Map(
       paymentMethods.map((method) => {
         const record = method as PaymentMethod & { _id: Types.ObjectId };
-        return [record._id.toString(), record];
+        return [
+          record._id.toString(),
+          { kind: record.kind, closingDay: record.closingDay },
+        ];
       }),
     );
 
@@ -151,12 +161,24 @@ export class ForecastService {
         })
         .lean(),
       this.expenseModel
-        .find({
-          tripId: boardObjectId,
-          recurringExpenseId: { $exists: true },
-          expenseDate: dateFilter,
-          skippedAt: { $exists: false },
-        })
+        .find(
+          attributionMode === 'calendar'
+            ? {
+                tripId: boardObjectId,
+                recurringExpenseId: { $exists: true },
+                expenseDate: dateFilter,
+                skippedAt: { $exists: false },
+              }
+            : {
+                tripId: boardObjectId,
+                recurringExpenseId: { $exists: true },
+                skippedAt: { $exists: false },
+                $or: [
+                  { billingCycleLabel: yearMonth },
+                  { expenseDate: dateFilter },
+                ],
+              },
+        )
         .lean(),
     ]);
 
@@ -186,9 +208,26 @@ export class ForecastService {
     for (const expense of materializedExpenses) {
       if (expense.status !== ExpenseStatus.PENDING) continue;
 
+      if (
+        attributionMode === 'cash_impact' &&
+        !expenseBelongsToYearMonth(
+          expense,
+          yearMonth,
+          attributionMode,
+          paymentMethodMap,
+        )
+      ) {
+        continue;
+      }
+
       const paymentMethodId = expense.paymentMethodId?.toString();
       const paymentMethod = paymentMethodId
-        ? paymentMethodMap.get(paymentMethodId)
+        ? paymentMethods.find(
+            (method) =>
+              (
+                method as PaymentMethod & { _id: Types.ObjectId }
+              )._id.toString() === paymentMethodId,
+          )
         : undefined;
 
       const amountInBoard =
@@ -260,6 +299,7 @@ export class ForecastService {
       boardId,
       yearMonth,
       currency: boardCurrency,
+      attributionMode,
       isFutureMonth,
       actual: {
         totalIncomes: actualSummary.totalIncomes,

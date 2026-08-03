@@ -7,6 +7,7 @@ import { Expense, ExpenseSchema } from '../expenses/expense.schema';
 import { ParticipantsModule } from '../participants/participants.module';
 import { BoardsModule } from '../trips/trips.module';
 import { RecurringMaterializationModule } from '../recurring-materialization/recurring-materialization.module';
+import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RecurringMaterializationModule } from '../recurring-materialization/rec
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BoardsModule),
     RecurringMaterializationModule,
+    PaymentMethodsModule,
   ],
   controllers: [IncomesController],
   providers: [IncomesService],
