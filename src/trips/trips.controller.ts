@@ -13,6 +13,7 @@ import {
 import { BoardsService } from './trips.service';
 import { CreateBoardDto } from './dto/create-board.dto';
 import { UpdateBoardDto } from './dto/update-board.dto';
+import { UpdateExpenseLinkDto } from './dto/update-expense-link.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { UserDocument } from '../users/user.schema';
@@ -70,6 +71,26 @@ export class BoardsController {
     );
     return {
       message: 'Tablero actualizado exitosamente',
+      board,
+      trip: board,
+    };
+  }
+
+  @Patch(':id/expense-link')
+  async updateExpenseLink(
+    @Param('id') id: string,
+    @Body() dto: UpdateExpenseLinkDto,
+    @GetUser() user: UserDocument,
+  ) {
+    const board = await this.boardsService.updateExpenseLink(
+      id,
+      dto.everydayBoardId ?? null,
+      user._id.toString(),
+    );
+    return {
+      message: dto.everydayBoardId
+        ? 'Viaje vinculado al tablero cotidiano'
+        : 'Viaje desvinculado del tablero cotidiano',
       board,
       trip: board,
     };

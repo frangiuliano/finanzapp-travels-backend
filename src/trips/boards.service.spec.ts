@@ -27,6 +27,7 @@ describe('BoardsService', () => {
     updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
     create: jest.fn(),
     find: jest.fn(),
+    findOne: jest.fn(),
     findById: jest.fn(),
     findByIdAndDelete: jest.fn(),
   };
@@ -58,6 +59,7 @@ describe('BoardsService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    boardModel.findOne.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -80,6 +82,11 @@ describe('BoardsService', () => {
   describe('onModuleInit', () => {
     it('should backfill missing type to travel', async () => {
       boardModel.updateMany.mockResolvedValue({ modifiedCount: 3 });
+      boardModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      });
       await service.onModuleInit();
       expect(boardModel.updateMany).toHaveBeenCalledWith(
         { type: { $exists: false } },
@@ -183,6 +190,39 @@ describe('BoardsService', () => {
       expect(BoardModelCtor).toHaveBeenCalledWith(
         expect.objectContaining({ type: BoardType.EVERYDAY }),
       );
+    });
+  });
+
+  describe('findExpenseScope', () => {
+    it('includes linked travel boards accessible to the user', async () => {
+      const travelId = new Types.ObjectId();
+      const parent = {
+        _id: boardId,
+        name: 'Casa',
+        type: BoardType.EVERYDAY,
+      };
+      const travel = {
+        _id: travelId,
+        name: 'Salta',
+        type: BoardType.TRAVEL,
+        parentBoardId: boardId,
+      };
+      boardModel.findById.mockResolvedValue(parent);
+      participantModel.findOne.mockResolvedValue({
+        role: ParticipantRole.OWNER,
+      });
+      participantModel.find.mockResolvedValue([
+        { _id: new Types.ObjectId(), tripId: travelId },
+      ]);
+      boardModel.find.mockResolvedValue([travel]);
+
+      await expect(
+        service.findExpenseScope(boardId.toString(), userId),
+      ).resolves.toEqual([parent, travel]);
+      expect(boardModel.find).toHaveBeenCalledWith({
+        _id: { $in: [travelId] },
+        type: BoardType.TRAVEL,
+      });
     });
   });
 

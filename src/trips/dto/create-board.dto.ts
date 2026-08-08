@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsIn,
   IsEnum,
+  IsMongoId,
 } from 'class-validator';
 import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
 import { BoardType } from '../board.schema';
@@ -31,6 +32,10 @@ export class CreateBoardDto {
     message: 'El tipo debe ser "everyday" o "travel"',
   })
   type?: BoardType;
+
+  @IsOptional()
+  @IsMongoId({ message: 'El tablero principal no es válido' })
+  parentBoardId?: string;
 }
 
 /** @deprecated Use CreateBoardDto */

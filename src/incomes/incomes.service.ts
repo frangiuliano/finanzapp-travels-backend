@@ -23,6 +23,8 @@ import {
 } from '../common/utils/parse-year-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
+import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
+import { BoardType } from '../trips/board.schema';
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 import { PaymentMethod } from '../payment-methods/payment-method.schema';
@@ -86,9 +88,7 @@ export class IncomesService {
     }
 
     await this.participantsService.ensureParticipantAccess(boardId, userId);
-
     const board = await this.boardsService.findByIdOrFail(boardId);
-
     const income = new this.incomeModel({
       tripId: new Types.ObjectId(boardId),
       amount: createIncomeDto.amount,
@@ -226,6 +226,10 @@ export class IncomesService {
     await this.participantsService.ensureParticipantAccess(boardId, userId);
 
     const board = await this.boardsService.findByIdOrFail(boardId);
+    const expenseScope = await this.boardsService.findExpenseScopeContext(
+      boardId,
+      userId,
+    );
     const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
     const { from, toExclusive } = parseYearMonth(yearMonth);
 
@@ -235,8 +239,9 @@ export class IncomesService {
     };
 
     const boardObjectId = new Types.ObjectId(boardId);
+    const expenseBoardIds = expenseScope.map((item) => item.board._id);
     const baseExpenseFilter = {
-      tripId: boardObjectId,
+      tripId: { $in: expenseBoardIds },
       skippedAt: { $exists: false },
       $or: [
         { recurringExpenseId: { $exists: false } },
@@ -263,7 +268,7 @@ export class IncomesService {
             expenseDate: dateFilter,
           }
         : {
-            tripId: boardObjectId,
+            tripId: { $in: expenseBoardIds },
             skippedAt: { $exists: false },
             $and: [
               {
@@ -318,7 +323,28 @@ export class IncomesService {
 
     let totalExpenses = 0;
     let excludedExpenses = 0;
-    for (const expense of expenses) {
+    const participantByBoardId = new Map(
+      expenseScope.map((item) => [
+        item.board._id.toString(),
+        item.participantId,
+      ]),
+    );
+    const typeByBoardId = new Map(
+      expenseScope.map((item) => [item.board._id.toString(), item.board.type]),
+    );
+    for (const sourceExpense of expenses) {
+      const sourceBoardId = sourceExpense.tripId?.toString() ?? boardId;
+      const inheritedTravel =
+        board.type === BoardType.EVERYDAY &&
+        typeByBoardId.get(sourceBoardId) === BoardType.TRAVEL;
+      const attributedAmount = inheritedTravel
+        ? getPersonalExpenseAmount(
+            sourceExpense,
+            participantByBoardId.get(sourceBoardId)!,
+          )
+        : sourceExpense.amount;
+      if (attributedAmount <= 0) continue;
+      const expense = { ...sourceExpense, amount: attributedAmount };
       if (
         attributionMode === 'cash_impact' &&
         !expenseBelongsToYearMonth(

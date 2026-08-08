@@ -39,6 +39,7 @@ describe('ReportsService', () => {
   const boardsService = {
     findByIdOrFail: jest.fn(),
     findAll: jest.fn(),
+    findExpenseScopeContext: jest.fn(),
   };
 
   const billingPeriodsService = {
@@ -72,6 +73,12 @@ describe('ReportsService', () => {
       baseCurrency: 'ARS',
       name: 'Hogar',
     });
+    boardsService.findExpenseScopeContext.mockResolvedValue([
+      {
+        board: { _id: boardId, baseCurrency: 'ARS', name: 'Hogar' },
+        participantId: new Types.ObjectId(),
+      },
+    ]);
   });
 
   describe('getBoardCalendarReport', () => {

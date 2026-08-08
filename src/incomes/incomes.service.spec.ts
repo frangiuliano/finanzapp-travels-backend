@@ -44,6 +44,7 @@ describe('IncomesService', () => {
 
   const boardsService = {
     findByIdOrFail: jest.fn(),
+    findExpenseScopeContext: jest.fn(),
   };
 
   const materializationService = {
@@ -66,6 +67,9 @@ describe('IncomesService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    boardsService.findExpenseScopeContext.mockResolvedValue([
+      { board: { _id: boardId }, participantId: new Types.ObjectId() },
+    ]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

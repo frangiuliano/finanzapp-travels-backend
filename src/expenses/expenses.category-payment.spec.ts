@@ -45,6 +45,7 @@ describe('ExpensesService category and payment methods', () => {
     findByIdOrFail: jest.fn(),
     assertTravelFeatures: jest.fn(),
     isTravelBoard: jest.fn(),
+    findExpenseScopeContext: jest.fn(),
   };
 
   const categoriesService = {
@@ -76,6 +77,12 @@ describe('ExpensesService category and payment methods', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    boardsService.findExpenseScopeContext.mockResolvedValue([
+      {
+        board: { _id: boardId, name: 'Hogar', type: BoardType.EVERYDAY },
+        participantId,
+      },
+    ]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -169,7 +176,7 @@ describe('ExpensesService category and payment methods', () => {
       });
 
       expect(expenseModel.find).toHaveBeenCalledWith({
-        tripId: boardId,
+        tripId: { $in: [boardId] },
         categoryId: categoryId,
         expenseDate: {
           $gte: new Date('2026-07-01'),
@@ -195,7 +202,7 @@ describe('ExpensesService category and payment methods', () => {
       });
 
       expect(expenseModel.find).toHaveBeenCalledWith({
-        tripId: boardId,
+        tripId: { $in: [boardId] },
         $or: [
           { paymentMethodId: paymentMethodId },
           { cardId: paymentMethodId },
