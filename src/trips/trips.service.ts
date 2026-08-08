@@ -54,13 +54,38 @@ export class BoardsService implements OnModuleInit {
         `Backfilled type=travel on ${result.modifiedCount} existing board(s)`,
       );
     }
+
+    await this.backfillTravelParentBoards();
+    await this.migrateLegacyTravelParentLinks();
   }
 
   async create(createBoardDto: CreateBoardDto, userId: string): Promise<Board> {
+    const type = createBoardDto.type ?? BoardType.TRAVEL;
+    const parentBoardId = await this.resolveParentBoardId(
+      type,
+      createBoardDto.parentBoardId,
+      userId,
+    );
+    const parentBoard = parentBoardId
+      ? await this.boardModel.findById(parentBoardId)
+      : null;
+    if (
+      parentBoard &&
+      createBoardDto.baseCurrency &&
+      createBoardDto.baseCurrency !== parentBoard.baseCurrency
+    ) {
+      throw new BadRequestException(
+        'La moneda base del viaje debe coincidir con la del tablero principal',
+      );
+    }
     const board = new this.boardModel({
       ...createBoardDto,
-      baseCurrency: createBoardDto.baseCurrency || DEFAULT_CURRENCY,
-      type: createBoardDto.type ?? BoardType.TRAVEL,
+      baseCurrency:
+        createBoardDto.baseCurrency ||
+        parentBoard?.baseCurrency ||
+        DEFAULT_CURRENCY,
+      type,
+      parentBoardId,
       createdBy: new Types.ObjectId(userId),
     });
 
@@ -70,6 +95,7 @@ export class BoardsService implements OnModuleInit {
       tripId: savedBoard._id,
       userId: new Types.ObjectId(userId),
       role: ParticipantRole.OWNER,
+      linkedEverydayBoardId: parentBoardId,
     });
 
     const boardId = savedBoard._id.toString();
@@ -84,7 +110,7 @@ export class BoardsService implements OnModuleInit {
   ): Promise<(Board & { userRole: ParticipantRole })[]> {
     const participants = await this.participantModel
       .find({ userId: new Types.ObjectId(userId) })
-      .select('tripId role')
+      .select('tripId role linkedEverydayBoardId')
       .lean();
 
     const boardIds = participants.map((p) => p.tripId);
@@ -107,11 +133,20 @@ export class BoardsService implements OnModuleInit {
         ...board,
         type: board.type ?? BoardType.TRAVEL,
         userRole: participant?.role || ParticipantRole.MEMBER,
+        linkedEverydayBoardId: participant?.linkedEverydayBoardId?.toString(),
       };
     });
   }
 
-  async findOne(id: string, userId: string): Promise<Board> {
+  async findOne(
+    id: string,
+    userId: string,
+  ): Promise<
+    Board & {
+      userRole: ParticipantRole;
+      linkedEverydayBoardId?: string;
+    }
+  > {
     const participant = await this.participantModel.findOne({
       tripId: new Types.ObjectId(id),
       userId: new Types.ObjectId(userId),
@@ -133,6 +168,8 @@ export class BoardsService implements OnModuleInit {
     return {
       ...board,
       type: board.type ?? BoardType.TRAVEL,
+      userRole: participant.role,
+      linkedEverydayBoardId: participant.linkedEverydayBoardId?.toString(),
     };
   }
 
@@ -148,6 +185,182 @@ export class BoardsService implements OnModuleInit {
     }
 
     return board;
+  }
+
+  async findExpenseScope(
+    boardId: string,
+    userId: string,
+  ): Promise<BoardDocument[]> {
+    const context = await this.findExpenseScopeContext(boardId, userId);
+    return context.map((item) => item.board);
+  }
+
+  async findExpenseScopeContext(
+    boardId: string,
+    userId: string,
+  ): Promise<Array<{ board: BoardDocument; participantId: Types.ObjectId }>> {
+    const board = await this.findByIdOrFail(boardId);
+    const participant = await this.participantModel.findOne({
+      tripId: board._id,
+      userId: new Types.ObjectId(userId),
+    });
+    if (!participant) {
+      throw new ForbiddenException(
+        'No tienes acceso a este tablero o el tablero no existe',
+      );
+    }
+    const ownContext = {
+      board,
+      participantId: participant._id,
+    };
+    if (board.type !== BoardType.EVERYDAY) return [ownContext];
+
+    const linkedParticipants = await this.participantModel.find({
+      userId: new Types.ObjectId(userId),
+      linkedEverydayBoardId: board._id,
+      tripId: { $ne: board._id },
+    });
+    if (linkedParticipants.length === 0) return [ownContext];
+    const participantByBoardId = new Map(
+      linkedParticipants.map((item) => [item.tripId.toString(), item]),
+    );
+    const children = await this.boardModel.find({
+      _id: { $in: linkedParticipants.map((item) => item.tripId) },
+      type: BoardType.TRAVEL,
+    });
+    return [
+      ownContext,
+      ...children.map((child) => ({
+        board: child,
+        participantId: participantByBoardId.get(child._id.toString())!._id,
+      })),
+    ];
+  }
+
+  async updateExpenseLink(
+    travelBoardId: string,
+    everydayBoardId: string | null,
+    userId: string,
+  ): Promise<
+    Board & {
+      userRole: ParticipantRole;
+      linkedEverydayBoardId?: string;
+    }
+  > {
+    const travel = await this.assertTravelFeatures(travelBoardId);
+    const participant = await this.participantModel.findOne({
+      tripId: travel._id,
+      userId: new Types.ObjectId(userId),
+    });
+    if (!participant) {
+      throw new ForbiddenException('No tienes acceso a este viaje');
+    }
+
+    if (!everydayBoardId) {
+      participant.linkedEverydayBoardId = undefined;
+      await participant.save();
+      return this.findOne(travelBoardId, userId);
+    }
+
+    const everyday = await this.assertEverydayFeatures(everydayBoardId);
+    const everydayParticipant = await this.participantModel.findOne({
+      tripId: everyday._id,
+      userId: new Types.ObjectId(userId),
+    });
+    if (!everydayParticipant) {
+      throw new ForbiddenException(
+        'Solo puedes vincular el viaje a un tablero cotidiano al que perteneces',
+      );
+    }
+    if (travel.baseCurrency !== everyday.baseCurrency) {
+      throw new BadRequestException(
+        'La moneda base del viaje debe coincidir con la del tablero cotidiano',
+      );
+    }
+    participant.linkedEverydayBoardId = everyday._id;
+    await participant.save();
+    return this.findOne(travelBoardId, userId);
+  }
+
+  private async resolveParentBoardId(
+    type: BoardType,
+    requestedParentId: string | undefined,
+    userId: string,
+  ): Promise<Types.ObjectId | undefined> {
+    if (type === BoardType.EVERYDAY) {
+      if (requestedParentId) {
+        throw new BadRequestException(
+          'Un tablero cotidiano no puede tener tablero principal',
+        );
+      }
+      return undefined;
+    }
+
+    const candidate = requestedParentId
+      ? await this.boardModel.findOne({
+          _id: new Types.ObjectId(requestedParentId),
+          type: BoardType.EVERYDAY,
+          createdBy: new Types.ObjectId(userId),
+        })
+      : await this.boardModel.findOne({
+          type: BoardType.EVERYDAY,
+          createdBy: new Types.ObjectId(userId),
+        });
+    if (requestedParentId && !candidate) {
+      throw new BadRequestException(
+        'El tablero principal debe ser un tablero cotidiano propio',
+      );
+    }
+    return candidate?._id;
+  }
+
+  private async backfillTravelParentBoards(): Promise<void> {
+    const everydayBoards = await this.boardModel
+      .find({ type: BoardType.EVERYDAY })
+      .select('_id createdBy baseCurrency')
+      .lean();
+    const byCreator = new Map<string, Types.ObjectId[]>();
+    for (const board of everydayBoards) {
+      const creatorId = board.createdBy.toString();
+      byCreator.set(creatorId, [
+        ...(byCreator.get(creatorId) ?? []),
+        board._id,
+      ]);
+    }
+    for (const [creatorId, parents] of byCreator) {
+      if (parents.length !== 1) continue;
+      await this.boardModel.updateMany(
+        {
+          type: BoardType.TRAVEL,
+          createdBy: new Types.ObjectId(creatorId),
+          parentBoardId: { $exists: false },
+          baseCurrency: everydayBoards.find((board) =>
+            board._id.equals(parents[0]),
+          )!.baseCurrency,
+        },
+        { $set: { parentBoardId: parents[0] } },
+      );
+    }
+  }
+
+  private async migrateLegacyTravelParentLinks(): Promise<void> {
+    const legacyLinks = await this.boardModel
+      .find({
+        type: BoardType.TRAVEL,
+        parentBoardId: { $exists: true },
+      })
+      .select('_id createdBy parentBoardId')
+      .lean();
+    for (const travel of legacyLinks) {
+      await this.participantModel.updateOne(
+        {
+          tripId: travel._id,
+          userId: travel.createdBy,
+          linkedEverydayBoardId: { $exists: false },
+        },
+        { $set: { linkedEverydayBoardId: travel.parentBoardId } },
+      );
+    }
   }
 
   async assertTravelFeatures(boardId: string): Promise<BoardDocument> {

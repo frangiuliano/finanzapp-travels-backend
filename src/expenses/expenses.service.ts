@@ -43,6 +43,7 @@ import {
 import { ExpenseFxPolicy, ExpenseFxPurpose } from './expense.schema';
 import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
+import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
 
 export interface ExpenseListFilters {
   budgetId?: string;
@@ -626,19 +627,28 @@ export class ExpensesService implements OnModuleInit {
     userId: string,
     filters: ExpenseListFilters = {},
   ): Promise<Expense[]> {
-    const userParticipant = await this.participantModel.findOne({
-      tripId: new Types.ObjectId(tripId),
-      userId: new Types.ObjectId(userId),
-    });
-
-    if (!userParticipant) {
-      throw new ForbiddenException(
-        'No tienes acceso a este viaje o el viaje no existe',
-      );
-    }
+    const scopeContext = await this.boardsService.findExpenseScopeContext(
+      tripId,
+      userId,
+    );
+    const scopeBoards = scopeContext.map((item) => item.board);
+    const scopeIds = scopeBoards.map((board) => board._id);
+    const sourceBoardById = new Map(
+      scopeBoards.map((board) => [
+        board._id.toString(),
+        { name: board.name, type: board.type },
+      ]),
+    );
+    const participantByBoardId = new Map(
+      scopeContext.map((item) => [
+        item.board._id.toString(),
+        item.participantId,
+      ]),
+    );
+    const isEverydayAggregation = scopeBoards[0].type === BoardType.EVERYDAY;
 
     const query: {
-      tripId: Types.ObjectId;
+      tripId: Types.ObjectId | { $in: Types.ObjectId[] };
       budgetId?: Types.ObjectId;
       status?: ExpenseStatus;
       categoryId?: Types.ObjectId;
@@ -649,7 +659,7 @@ export class ExpensesService implements OnModuleInit {
         $gte?: Date;
         $lt?: Date;
       };
-    } = { tripId: new Types.ObjectId(tripId) };
+    } = { tripId: { $in: scopeIds } };
 
     if (filters.budgetId) {
       query.budgetId = new Types.ObjectId(filters.budgetId);
@@ -689,11 +699,37 @@ export class ExpensesService implements OnModuleInit {
 
     const board = await this.boardsService.findByIdOrFail(tripId);
     const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
-    const transformed = this.transformExpenses(expenses);
+    const originalAmountById = new Map<string, number>();
+    const attributedExpenses = expenses.flatMap((expense) => {
+      const sourceId = expense.tripId.toString();
+      const source = sourceBoardById.get(sourceId);
+      if (!isEverydayAggregation || source?.type !== BoardType.TRAVEL) {
+        return [expense];
+      }
+      const participantId = participantByBoardId.get(sourceId);
+      const attributedAmount = participantId
+        ? getPersonalExpenseAmount(expense, participantId)
+        : 0;
+      if (attributedAmount <= 0) return [];
+      originalAmountById.set(expense._id.toString(), expense.amount);
+      return [{ ...expense, amount: attributedAmount }];
+    });
+    const transformed = this.transformExpenses(attributedExpenses);
     return Promise.all(
-      transformed.map((expense) =>
-        this.enrichWithDisplayFx(expense, boardCurrency),
-      ),
+      transformed.map(async (expense) => {
+        const expenseId = (expense as Expense & { _id: string })._id.toString();
+        const enriched = await this.enrichWithDisplayFx(expense, boardCurrency);
+        const source = sourceBoardById.get(expense.tripId.toString());
+        return Object.assign(enriched, {
+          sourceBoardId: expense.tripId.toString(),
+          sourceBoardName: source?.name ?? 'Tablero eliminado',
+          sourceBoardType: source?.type ?? BoardType.TRAVEL,
+          originalAmount: originalAmountById.get(expenseId),
+          attributedAmount: originalAmountById.has(expenseId)
+            ? expense.amount
+            : undefined,
+        });
+      }),
     );
   }
 

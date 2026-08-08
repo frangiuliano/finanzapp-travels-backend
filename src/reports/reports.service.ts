@@ -13,7 +13,7 @@ import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 import { BillingPeriodsService } from '../billing-periods/billing-periods.service';
-import { Board } from '../trips/board.schema';
+import { Board, BoardType } from '../trips/board.schema';
 import { parseYearMonth } from '../common/utils/parse-year-month';
 import {
   assertValidCycleLabel,
@@ -24,6 +24,7 @@ import {
 } from '../common/utils/credit-cycle';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
+import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
 
 export interface CategoryBreakdownItem {
   categoryId: string | null;
@@ -110,7 +111,10 @@ function addUtcDay(dateStr: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-type BoardListItem = Board & { _id: Types.ObjectId };
+type BoardListItem = Board & {
+  _id: Types.ObjectId;
+  linkedEverydayBoardId?: string;
+};
 
 function getBoardId(board: BoardListItem): string {
   return board._id.toString();
@@ -148,8 +152,12 @@ export class ReportsService {
     userId: string,
   ): Promise<BoardCalendarReport> {
     await this.participantsService.ensureParticipantAccess(boardId, userId);
-
     const board = await this.boardsService.findByIdOrFail(boardId);
+    const scopeContext = await this.boardsService.findExpenseScopeContext(
+      boardId,
+      userId,
+    );
+    const scopeBoards = scopeContext.map((item) => item.board);
     const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
     const { from, toExclusive } = parseYearMonth(yearMonth);
     const dateFilter = {
@@ -157,13 +165,14 @@ export class ReportsService {
       $lt: parseDateFrom(toExclusive),
     };
     const boardObjectId = new Types.ObjectId(boardId);
+    const boardObjectIds = scopeBoards.map((item) => item._id);
 
     const [incomes, expenses] = await Promise.all([
       this.incomeModel
         .find({ tripId: boardObjectId, incomeDate: dateFilter })
         .lean(),
       this.expenseModel
-        .find({ tripId: boardObjectId, expenseDate: dateFilter })
+        .find({ tripId: { $in: boardObjectIds }, expenseDate: dateFilter })
         .lean(),
     ]);
 
@@ -181,7 +190,29 @@ export class ReportsService {
     let excludedExpenses = 0;
     const convertibleExpenses: Expense[] = [];
 
-    for (const expense of expenses) {
+    const participantByBoardId = new Map(
+      scopeContext.map((item) => [
+        item.board._id.toString(),
+        item.participantId,
+      ]),
+    );
+    const boardTypeById = new Map(
+      scopeBoards.map((item) => [item._id.toString(), item.type]),
+    );
+
+    for (const sourceExpense of expenses) {
+      const sourceBoardId = sourceExpense.tripId?.toString() ?? boardId;
+      const isInheritedTravel =
+        board.type === BoardType.EVERYDAY &&
+        boardTypeById.get(sourceBoardId) === BoardType.TRAVEL;
+      const attributedAmount = isInheritedTravel
+        ? getPersonalExpenseAmount(
+            sourceExpense,
+            participantByBoardId.get(sourceBoardId)!,
+          )
+        : sourceExpense.amount;
+      if (attributedAmount <= 0) continue;
+      const expense = { ...sourceExpense, amount: attributedAmount };
       const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
         expense,
         boardCurrency,
@@ -195,7 +226,11 @@ export class ReportsService {
     }
 
     const [byCategory, byPaymentMethod] = await Promise.all([
-      this.buildCategoryBreakdown(boardId, convertibleExpenses, boardCurrency),
+      this.buildCategoryBreakdown(
+        boardObjectIds,
+        convertibleExpenses,
+        boardCurrency,
+      ),
       this.buildPaymentMethodBreakdown(convertibleExpenses, boardCurrency),
     ]);
 
@@ -357,6 +392,15 @@ export class ReportsService {
       targetBoardIds = Array.from(allowedBoardIds);
     }
 
+    const targetSet = new Set(targetBoardIds);
+    targetBoardIds = targetBoardIds.filter((id) => {
+      const board = userBoards.find((item) => getBoardId(item) === id);
+      if (board?.type !== BoardType.TRAVEL) return true;
+      const linkedEverydayBoardId =
+        board.linkedEverydayBoardId ?? board.parentBoardId?.toString();
+      return !linkedEverydayBoardId || !targetSet.has(linkedEverydayBoardId);
+    });
+
     const boards: ConsolidatedBoardSummary[] = [];
     const totalsByCurrency: Record<string, CurrencyTotals> = {};
 
@@ -405,7 +449,7 @@ export class ReportsService {
   }
 
   private async buildCategoryBreakdown(
-    boardId: string,
+    boardIds: Types.ObjectId[],
     expenses: Expense[],
     boardCurrency: string,
   ): Promise<CategoryBreakdownItem[]> {
@@ -433,7 +477,7 @@ export class ReportsService {
       categoryIds.length > 0
         ? await this.categoryModel
             .find({
-              tripId: new Types.ObjectId(boardId),
+              tripId: { $in: boardIds },
               _id: { $in: categoryIds.map((id) => new Types.ObjectId(id)) },
             })
             .lean()

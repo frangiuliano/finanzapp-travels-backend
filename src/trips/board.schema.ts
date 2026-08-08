@@ -22,6 +22,9 @@ export class Board {
   })
   type: BoardType;
 
+  @Prop({ type: Types.ObjectId, ref: 'Board', required: false, index: true })
+  parentBoardId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 

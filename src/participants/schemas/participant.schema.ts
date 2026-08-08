@@ -30,6 +30,10 @@ export class Participant {
 
   @Prop({ type: Types.ObjectId, ref: 'Invitation', required: false })
   invitationId?: Types.ObjectId;
+
+  /** Personal destination where this user's share of travel expenses appears. */
+  @Prop({ type: Types.ObjectId, ref: 'Board', required: false, index: true })
+  linkedEverydayBoardId?: Types.ObjectId;
 }
 
 export type ParticipantDocument = Participant & Document;
