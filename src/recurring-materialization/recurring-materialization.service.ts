@@ -149,7 +149,16 @@ export class RecurringMaterializationService {
 
     if (existing) {
       existing.amount = amount;
-      return existing.save();
+      const saved = await existing.save();
+      rule.amount = amount;
+      await rule.save();
+
+      await this.syncPendingIncomeAmountsFromMonth(
+        rule._id.toString(),
+        effectiveFrom,
+      );
+
+      return saved;
     }
 
     const version = new this.recurringIncomeVersionModel({
@@ -194,7 +203,16 @@ export class RecurringMaterializationService {
 
     if (existing) {
       existing.amount = amount;
-      return existing.save();
+      const saved = await existing.save();
+      rule.amount = amount;
+      await rule.save();
+
+      await this.syncPendingExpenseAmountsFromMonth(
+        rule._id.toString(),
+        effectiveFrom,
+      );
+
+      return saved;
     }
 
     const version = new this.recurringExpenseVersionModel({
