@@ -47,6 +47,18 @@ export class BillingPeriodsController {
     return { pending };
   }
 
+  @Get('next')
+  async getNext(
+    @Query('paymentMethodId') paymentMethodId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    const pending = await this.billingPeriodsService.getNextPeriod(
+      paymentMethodId,
+      user._id.toString(),
+    );
+    return { pending };
+  }
+
   @Post('confirm')
   @HttpCode(HttpStatus.OK)
   async confirm(

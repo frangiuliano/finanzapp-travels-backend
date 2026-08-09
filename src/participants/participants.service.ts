@@ -612,6 +612,15 @@ export class ParticipantsService {
       .lean();
   }
 
+  async findBoardIdsForUser(userId: string): Promise<Types.ObjectId[]> {
+    const participants = await this.participantModel
+      .find({ userId: new Types.ObjectId(userId) })
+      .select('tripId')
+      .lean();
+
+    return participants.map((participant) => participant.tripId);
+  }
+
   async findOne(
     participantId: string,
     tripId: string,

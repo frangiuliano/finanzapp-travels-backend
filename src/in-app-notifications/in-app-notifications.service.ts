@@ -138,4 +138,19 @@ export class InAppNotificationsService {
       { readAt: new Date() },
     );
   }
+
+  async markBillingPeriodNotificationsReadForMethod(
+    userId: string,
+    paymentMethodId: string,
+  ): Promise<void> {
+    await this.notificationModel.updateMany(
+      {
+        userId: new Types.ObjectId(userId),
+        type: InAppNotificationType.BILLING_PERIOD_CONFIRMATION,
+        'payload.paymentMethodId': paymentMethodId,
+        readAt: null,
+      },
+      { readAt: new Date() },
+    );
+  }
 }

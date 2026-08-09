@@ -33,6 +33,22 @@ export interface BillingPeriodDefaults {
   isConfirmed: boolean;
 }
 
+function addUtcDay(date: string): string {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + 1);
+  return value.toISOString().slice(0, 10);
+}
+
+function subtractUtcDay(date: string): string {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() - 1);
+  return value.toISOString().slice(0, 10);
+}
+
+function cycleLabelFor(date: string): string {
+  return date.slice(0, 7);
+}
+
 @Injectable()
 export class BillingPeriodsService {
   constructor(
@@ -101,9 +117,64 @@ export class BillingPeriodsService {
       paymentMethodName: method.name,
       cycleLabel,
       closingDay: method.closingDay,
-      periodFrom: from,
-      periodTo: periodToInclusive,
+      periodFrom: confirmed?.periodFrom ?? from,
+      periodTo: confirmed?.periodTo ?? periodToInclusive,
       isConfirmed: Boolean(confirmed),
+    };
+  }
+
+  async getNextPeriod(
+    paymentMethodId: string,
+    userId: string,
+  ): Promise<BillingPeriodDefaults> {
+    const method = await this.paymentMethodsService.findOne(
+      paymentMethodId,
+      userId,
+    );
+    if (method.kind !== PaymentMethodKind.CREDIT || method.closingDay == null) {
+      throw new BadRequestException(
+        'Configurá el día de cierre estimado de la tarjeta primero',
+      );
+    }
+
+    const latest = await this.billingPeriodModel
+      .findOne({ paymentMethodId: new Types.ObjectId(paymentMethodId) })
+      .sort({ periodTo: -1 })
+      .lean();
+
+    const today = new Date();
+    const lastClosedLabel = listRecentCycleLabels(
+      method.closingDay,
+      3,
+      today,
+    ).find((label) => isCycleClosed(label, method.closingDay!, today));
+    if (!lastClosedLabel) {
+      throw new BadRequestException('No se pudo estimar el último cierre');
+    }
+    const currentEstimate = getCreditCycleRange(
+      lastClosedLabel,
+      method.closingDay,
+    );
+    const baseClosingDate =
+      latest?.periodTo ?? currentEstimate.periodToInclusive;
+    const baseDate = new Date(`${baseClosingDate}T00:00:00.000Z`);
+    baseDate.setUTCMonth(baseDate.getUTCMonth() + 1);
+    const estimatedTo = baseDate.toISOString().slice(0, 10);
+    const existing = await this.billingPeriodModel
+      .findOne({
+        paymentMethodId: new Types.ObjectId(paymentMethodId),
+        periodFrom: addUtcDay(baseClosingDate),
+      })
+      .lean();
+
+    return {
+      paymentMethodId,
+      paymentMethodName: method.name,
+      cycleLabel: existing?.cycleLabel ?? cycleLabelFor(estimatedTo),
+      closingDay: method.closingDay,
+      periodFrom: existing?.periodFrom ?? addUtcDay(baseClosingDate),
+      periodTo: existing?.periodTo ?? estimatedTo,
+      isConfirmed: Boolean(existing),
     };
   }
 
@@ -134,6 +205,53 @@ export class BillingPeriodsService {
       );
     }
 
+    const current = await this.findConfirmedPeriod(
+      dto.paymentMethodId,
+      dto.cycleLabel,
+    );
+    if (current) {
+      const [previous, next] = await Promise.all([
+        this.billingPeriodModel
+          .findOne({
+            paymentMethodId: new Types.ObjectId(dto.paymentMethodId),
+            periodTo: { $lt: current.periodFrom },
+          })
+          .sort({ periodTo: -1 }),
+        this.billingPeriodModel
+          .findOne({
+            paymentMethodId: new Types.ObjectId(dto.paymentMethodId),
+            periodFrom: { $gt: current.periodTo },
+          })
+          .sort({ periodFrom: 1 }),
+      ]);
+      const previousTo = subtractUtcDay(dto.periodFrom);
+      const nextFrom = addUtcDay(dto.periodTo);
+      if (previous && previous.periodFrom > previousTo) {
+        throw new BadRequestException(
+          'La fecha desde deja al ciclo anterior sin días válidos',
+        );
+      }
+      if (next && nextFrom > next.periodTo) {
+        throw new BadRequestException(
+          'La fecha hasta deja al ciclo siguiente sin días válidos',
+        );
+      }
+      if (previous) previous.periodTo = previousTo;
+      if (next) next.periodFrom = nextFrom;
+      await Promise.all([previous?.save(), next?.save()]);
+    } else {
+      const overlap = await this.billingPeriodModel.findOne({
+        paymentMethodId: new Types.ObjectId(dto.paymentMethodId),
+        periodFrom: { $lte: dto.periodTo },
+        periodTo: { $gte: dto.periodFrom },
+      });
+      if (overlap) {
+        throw new BadRequestException(
+          'El período se superpone con otro ciclo de esta tarjeta',
+        );
+      }
+    }
+
     const confirmedAt = new Date();
     const period = await this.billingPeriodModel.findOneAndUpdate(
       {
@@ -160,12 +278,19 @@ export class BillingPeriodsService {
       dto.paymentMethodId,
       dto.cycleLabel,
     );
+    if (!current) {
+      await this.notificationsService.markBillingPeriodNotificationsReadForMethod(
+        userId,
+        dto.paymentMethodId,
+      );
+    }
 
     return period.toObject();
   }
 
   async syncNotificationsForUser(userId: string): Promise<void> {
-    const methods = await this.paymentMethodsService.findByUser(userId);
+    const methods =
+      await this.paymentMethodsService.findAccessibleCreditMethods(userId);
     const creditMethods = methods.filter(
       (method) =>
         method.kind === PaymentMethodKind.CREDIT && method.closingDay != null,
@@ -190,26 +315,26 @@ export class BillingPeriodsService {
           paymentMethodId,
           cycleLabel,
         );
-        if (existing) {
-          continue;
-        }
-
-        const { periodToInclusive } = getCreditCycleRange(
-          cycleLabel,
-          closingDay,
-        );
+        const estimated = getCreditCycleRange(cycleLabel, closingDay);
+        const closedOn = existing?.periodTo ?? estimated.periodToInclusive;
+        const nextFrom = addUtcDay(closedOn);
+        const nextExists = await this.billingPeriodModel.exists({
+          paymentMethodId: new Types.ObjectId(paymentMethodId),
+          periodFrom: nextFrom,
+        });
+        if (nextExists) break;
 
         await this.notificationsService.createIfNotExists({
           userId,
           type: InAppNotificationType.BILLING_PERIOD_CONFIRMATION,
-          title: `Confirmá el cierre de ${method.name}`,
-          body: `El período que cierra el ${periodToInclusive} necesita confirmación para reportes precisos.`,
+          title: `Informá el próximo cierre de ${method.name}`,
+          body: `El ciclo cerró el ${closedOn}. Elegí la fecha del próximo cierre para calcular el nuevo período.`,
           payload: {
             paymentMethodId,
             cycleLabel,
             paymentMethodName: method.name,
           },
-          actionPath: `/billing-periods/confirm?paymentMethodId=${paymentMethodId}&cycleLabel=${cycleLabel}`,
+          actionPath: `/billing-periods/confirm?paymentMethodId=${paymentMethodId}&mode=next`,
         });
 
         break;

@@ -174,6 +174,28 @@ export class PaymentMethodsService implements OnModuleInit {
       .lean();
   }
 
+  async findAccessibleCreditMethods(userId: string): Promise<PaymentMethod[]> {
+    const boardIds = await this.participantsService.findBoardIdsForUser(userId);
+
+    return this.paymentMethodModel
+      .find({
+        kind: PaymentMethodKind.CREDIT,
+        isActive: true,
+        $or: [
+          {
+            ownerType: PaymentMethodOwnerType.USER,
+            userId: new Types.ObjectId(userId),
+          },
+          {
+            ownerType: PaymentMethodOwnerType.BOARD,
+            tripId: { $in: boardIds },
+          },
+        ],
+      })
+      .sort({ name: 1 })
+      .lean();
+  }
+
   async findBoardOwned(
     boardId: string,
     userId: string,
