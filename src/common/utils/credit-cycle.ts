@@ -27,6 +27,10 @@ function addUtcDays(dateStr: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+export function getNextCycleStart(closingDate: string): string {
+  return addUtcDays(closingDate, 1);
+}
+
 export function assertValidClosingDay(closingDay: number): void {
   if (!Number.isInteger(closingDay) || closingDay < 1 || closingDay > 28) {
     throw new BadRequestException('closingDay debe ser un entero entre 1 y 28');

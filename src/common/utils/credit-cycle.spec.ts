@@ -2,11 +2,17 @@ import { BadRequestException } from '@nestjs/common';
 import {
   getCreditCycleRange,
   getCurrentCycleClosingMonth,
+  getNextCycleStart,
   resolveCycleClosingMonth,
   listRecentCycleLabels,
 } from './credit-cycle';
 
 describe('credit-cycle', () => {
+  it('should start the next cycle on the day after the previous closing', () => {
+    expect(getNextCycleStart('2026-08-16')).toBe('2026-08-17');
+    expect(getNextCycleStart('2026-12-31')).toBe('2027-01-01');
+  });
+
   describe('resolveCycleClosingMonth', () => {
     it('should assign expense on closing day to that month cycle', () => {
       expect(

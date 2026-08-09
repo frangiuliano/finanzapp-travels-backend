@@ -19,6 +19,7 @@ import { InAppNotificationsService } from '../in-app-notifications/in-app-notifi
 import { InAppNotificationType } from '../in-app-notifications/in-app-notification.schema';
 import {
   getCreditCycleRange,
+  getNextCycleStart,
   isCycleClosed,
   listRecentCycleLabels,
 } from '../common/utils/credit-cycle';
@@ -34,9 +35,7 @@ export interface BillingPeriodDefaults {
 }
 
 function addUtcDay(date: string): string {
-  const value = new Date(`${date}T00:00:00.000Z`);
-  value.setUTCDate(value.getUTCDate() + 1);
-  return value.toISOString().slice(0, 10);
+  return getNextCycleStart(date);
 }
 
 function subtractUtcDay(date: string): string {
@@ -199,17 +198,17 @@ export class BillingPeriodsService {
       }
     }
 
-    if (dto.periodFrom > dto.periodTo) {
-      throw new BadRequestException(
-        'La fecha desde debe ser anterior o igual a la fecha hasta',
-      );
-    }
-
     const current = await this.findConfirmedPeriod(
       dto.paymentMethodId,
       dto.cycleLabel,
     );
+    let resolvedPeriodFrom = dto.periodFrom;
     if (current) {
+      if (dto.periodFrom > dto.periodTo) {
+        throw new BadRequestException(
+          'La fecha desde debe ser anterior o igual a la fecha hasta',
+        );
+      }
       const [previous, next] = await Promise.all([
         this.billingPeriodModel
           .findOne({
@@ -240,10 +239,45 @@ export class BillingPeriodsService {
       if (next) next.periodFrom = nextFrom;
       await Promise.all([previous?.save(), next?.save()]);
     } else {
+      const latest = await this.billingPeriodModel
+        .findOne({
+          paymentMethodId: new Types.ObjectId(dto.paymentMethodId),
+        })
+        .sort({ periodTo: -1 })
+        .lean();
+
+      if (latest) {
+        resolvedPeriodFrom = getNextCycleStart(latest.periodTo);
+      } else {
+        if (method.closingDay == null) {
+          throw new BadRequestException(
+            'Configurá el día de cierre estimado de la tarjeta primero',
+          );
+        }
+        const today = new Date();
+        const lastClosedLabel = listRecentCycleLabels(
+          method.closingDay,
+          3,
+          today,
+        ).find((label) => isCycleClosed(label, method.closingDay!, today));
+        if (!lastClosedLabel) {
+          throw new BadRequestException('No se pudo estimar el último cierre');
+        }
+        resolvedPeriodFrom = getNextCycleStart(
+          getCreditCycleRange(lastClosedLabel, method.closingDay)
+            .periodToInclusive,
+        );
+      }
+
+      if (resolvedPeriodFrom > dto.periodTo) {
+        throw new BadRequestException(
+          'La fecha de cierre debe ser posterior al cierre anterior',
+        );
+      }
       const overlap = await this.billingPeriodModel.findOne({
         paymentMethodId: new Types.ObjectId(dto.paymentMethodId),
         periodFrom: { $lte: dto.periodTo },
-        periodTo: { $gte: dto.periodFrom },
+        periodTo: { $gte: resolvedPeriodFrom },
       });
       if (overlap) {
         throw new BadRequestException(
@@ -262,7 +296,7 @@ export class BillingPeriodsService {
         paymentMethodId: new Types.ObjectId(dto.paymentMethodId),
         userId: new Types.ObjectId(userId),
         cycleLabel: dto.cycleLabel,
-        periodFrom: dto.periodFrom,
+        periodFrom: resolvedPeriodFrom,
         periodTo: dto.periodTo,
         confirmedAt,
       },
