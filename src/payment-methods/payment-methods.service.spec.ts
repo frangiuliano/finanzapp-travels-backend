@@ -282,6 +282,95 @@ describe('PaymentMethodsService', () => {
       userId: new Types.ObjectId(userId),
     };
 
+    describe('participant configuration query', () => {
+      const secondMethodId = new Types.ObjectId();
+      const participantMethods = [
+        {
+          ...personalMethod,
+          kind: PaymentMethodKind.CREDIT,
+          name: 'Personal Visa',
+          isActive: true,
+        },
+        {
+          _id: secondMethodId,
+          ownerType: PaymentMethodOwnerType.USER,
+          userId: new Types.ObjectId(otherUserId),
+          kind: PaymentMethodKind.DEBIT,
+          name: 'Other debit',
+          isActive: true,
+        },
+      ];
+
+      beforeEach(() => {
+        participantsService.ensureBoardParticipantAccess.mockResolvedValue(
+          undefined,
+        );
+        participantsService.findByTrip.mockResolvedValue([
+          { userId: new Types.ObjectId(userId) },
+          { userId: new Types.ObjectId(otherUserId) },
+        ]);
+        modelMethods.find.mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          populate: jest.fn().mockReturnThis(),
+          sort: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue(participantMethods),
+        });
+      });
+
+      it('allows a participant and returns active personal methods for every participant', async () => {
+        visibilityModel.find.mockReturnValue({
+          distinct: jest.fn().mockResolvedValue([]),
+        });
+
+        const methods = await service.findParticipantMethodsForBoard(
+          boardId.toString(),
+          userId,
+        );
+
+        expect(
+          participantsService.ensureBoardParticipantAccess,
+        ).toHaveBeenCalledWith(boardId.toString(), userId);
+        expect(modelMethods.find).toHaveBeenCalledWith({
+          ownerType: PaymentMethodOwnerType.USER,
+          userId: {
+            $in: [new Types.ObjectId(userId), new Types.ObjectId(otherUserId)],
+          },
+          isActive: true,
+        });
+        expect(methods).toHaveLength(2);
+      });
+
+      it('returns enabled and disabled methods according to this board exclusions', async () => {
+        visibilityModel.find.mockReturnValue({
+          distinct: jest.fn().mockResolvedValue([secondMethodId]),
+        });
+
+        const methods = await service.findParticipantMethodsForBoard(
+          boardId.toString(),
+          userId,
+        );
+
+        expect(methods).toEqual([
+          expect.objectContaining({ _id: methodId, enabled: true }),
+          expect.objectContaining({ _id: secondMethodId, enabled: false }),
+        ]);
+      });
+
+      it('rejects users outside the board before reading payment methods', async () => {
+        participantsService.ensureBoardParticipantAccess.mockRejectedValue(
+          new ForbiddenException('No tienes acceso'),
+        );
+
+        await expect(
+          service.findParticipantMethodsForBoard(
+            boardId.toString(),
+            otherUserId,
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        expect(modelMethods.find).not.toHaveBeenCalled();
+      });
+    });
+
     it('reports personal methods as enabled by default and includes the owner', async () => {
       participantsService.ensureBoardParticipantAccess.mockResolvedValue(
         undefined,

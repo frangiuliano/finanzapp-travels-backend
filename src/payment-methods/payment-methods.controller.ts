@@ -10,6 +10,7 @@ import {
   HttpStatus,
   UseGuards,
   Query,
+  BadRequestException,
 } from '@nestjs/common';
 import { PaymentMethodsService } from './payment-methods.service';
 import { CreatePaymentMethodDto } from './dto/create-payment-method.dto';
@@ -50,6 +51,21 @@ export class PaymentMethodsController {
   ) {
     const resolvedBoardId = boardId || tripId;
     const inactive = includeInactive === 'true';
+
+    if (scope === 'board-participants') {
+      if (!resolvedBoardId) {
+        throw new BadRequestException(
+          'boardId o tripId es requerido para consultar participantes',
+        );
+      }
+
+      const paymentMethods =
+        await this.paymentMethodsService.findParticipantMethodsForBoard(
+          resolvedBoardId,
+          user._id.toString(),
+        );
+      return { paymentMethods };
+    }
 
     if (scope === 'user') {
       if (resolvedBoardId) {
