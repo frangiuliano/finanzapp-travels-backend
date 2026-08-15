@@ -306,6 +306,46 @@ export class PaymentMethodsService implements OnModuleInit {
     })) as PaymentMethodWithBoardVisibility[];
   }
 
+  async findParticipantMethodsForBoard(
+    boardId: string,
+    userId: string,
+  ): Promise<PaymentMethodWithBoardVisibility[]> {
+    await this.participantsService.ensureBoardParticipantAccess(
+      boardId,
+      userId,
+    );
+
+    const participants = await this.participantsService.findByTrip(
+      boardId,
+      userId,
+    );
+    const participantUserIds = this.extractParticipantUserIds(participants);
+
+    const methods = await this.paymentMethodModel
+      .find({
+        ownerType: PaymentMethodOwnerType.USER,
+        userId: { $in: participantUserIds },
+        isActive: true,
+      })
+      .select('_id ownerType kind name lastFourDigits isActive userId')
+      .populate('userId', '_id firstName lastName')
+      .sort({ kind: 1, name: 1 })
+      .lean();
+
+    const disabledIds = await this.paymentMethodBoardExclusionModel
+      .find({
+        tripId: new Types.ObjectId(boardId),
+        paymentMethodId: { $in: methods.map((method) => method._id) },
+      })
+      .distinct('paymentMethodId');
+    const disabledIdSet = new Set(disabledIds.map((id) => id.toString()));
+
+    return methods.map((method) => ({
+      ...method,
+      enabled: !disabledIdSet.has(method._id.toString()),
+    })) as PaymentMethodWithBoardVisibility[];
+  }
+
   async updateBoardVisibility(
     paymentMethodId: string,
     boardId: string,
