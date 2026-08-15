@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Types } from 'mongoose';
 import { PaymentMethodsService } from './payment-methods.service';
 import {
@@ -10,6 +14,7 @@ import {
 } from './payment-method.schema';
 import { Card } from '../cards/card.schema';
 import { ParticipantsService } from '../participants/participants.service';
+import { PaymentMethodBoardExclusion } from './payment-method-board-exclusion.schema';
 
 describe('PaymentMethodsService', () => {
   let service: PaymentMethodsService;
@@ -17,6 +22,7 @@ describe('PaymentMethodsService', () => {
   const boardId = new Types.ObjectId();
   const userId = new Types.ObjectId().toString();
   const otherUserId = new Types.ObjectId().toString();
+  const otherBoardId = new Types.ObjectId();
   const methodId = new Types.ObjectId();
 
   const modelMethods = {
@@ -40,8 +46,15 @@ describe('PaymentMethodsService', () => {
     find: jest.fn().mockResolvedValue([]),
   };
 
+  const visibilityModel = {
+    find: jest.fn(),
+    updateOne: jest.fn(),
+    deleteOne: jest.fn(),
+  };
+
   const participantsService = {
     ensureParticipantAccess: jest.fn(),
+    ensureBoardParticipantAccess: jest.fn(),
     findByTrip: jest.fn(),
   };
 
@@ -57,6 +70,10 @@ describe('PaymentMethodsService', () => {
           useValue: paymentMethodModel,
         },
         { provide: getModelToken(Card.name), useValue: cardModel },
+        {
+          provide: getModelToken(PaymentMethodBoardExclusion.name),
+          useValue: visibilityModel,
+        },
         { provide: ParticipantsService, useValue: participantsService },
       ],
     }).compile();
@@ -146,6 +163,9 @@ describe('PaymentMethodsService', () => {
         { userId: new Types.ObjectId(userId) },
       ]);
       modelMethods.countDocuments.mockResolvedValue(1);
+      visibilityModel.find.mockReturnValue({
+        distinct: jest.fn().mockResolvedValue([]),
+      });
 
       const chain = {
         populate: jest.fn().mockReturnThis(),
@@ -167,7 +187,216 @@ describe('PaymentMethodsService', () => {
       );
 
       expect(modelMethods.find).toHaveBeenCalled();
+      expect(modelMethods.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          $or: expect.arrayContaining([
+            expect.objectContaining({
+              ownerType: PaymentMethodOwnerType.USER,
+              _id: { $nin: [] },
+            }),
+          ]),
+        }),
+      );
       expect(result).toHaveLength(1);
+    });
+
+    it('excludes only personal methods disabled for the requested board', async () => {
+      const disabledMethodId = new Types.ObjectId();
+      participantsService.ensureParticipantAccess.mockResolvedValue(undefined);
+      participantsService.findByTrip.mockResolvedValue([
+        { userId: new Types.ObjectId(userId) },
+      ]);
+      modelMethods.countDocuments.mockResolvedValue(1);
+      visibilityModel.find.mockImplementation(
+        (filter: { tripId: Types.ObjectId }) => ({
+          distinct: jest
+            .fn()
+            .mockResolvedValue(
+              filter.tripId.toString() === boardId.toString()
+                ? [disabledMethodId]
+                : [],
+            ),
+        }),
+      );
+      modelMethods.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+      await service.findAvailableForBoard(boardId.toString(), userId);
+      expect(modelMethods.find).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          $or: expect.arrayContaining([
+            expect.objectContaining({ _id: { $nin: [disabledMethodId] } }),
+          ]),
+        }),
+      );
+
+      await service.findAvailableForBoard(otherBoardId.toString(), userId);
+      expect(modelMethods.find).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          $or: expect.arrayContaining([
+            expect.objectContaining({ _id: { $nin: [] } }),
+          ]),
+        }),
+      );
+    });
+
+    it('keeps board-owned methods and filters inactive methods as before', async () => {
+      participantsService.ensureParticipantAccess.mockResolvedValue(undefined);
+      participantsService.findByTrip.mockResolvedValue([]);
+      modelMethods.countDocuments.mockResolvedValue(1);
+      visibilityModel.find.mockReturnValue({
+        distinct: jest.fn().mockResolvedValue([]),
+      });
+      modelMethods.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+      await service.findAvailableForBoard(boardId.toString(), userId);
+
+      expect(modelMethods.find).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          $or: expect.arrayContaining([
+            expect.objectContaining({
+              ownerType: PaymentMethodOwnerType.BOARD,
+              isActive: true,
+            }),
+            expect.objectContaining({
+              ownerType: PaymentMethodOwnerType.USER,
+              isActive: true,
+            }),
+          ]),
+        }),
+      );
+    });
+  });
+
+  describe('board visibility', () => {
+    const personalMethod = {
+      _id: methodId,
+      ownerType: PaymentMethodOwnerType.USER,
+      userId: new Types.ObjectId(userId),
+    };
+
+    it('reports personal methods as enabled by default and includes the owner', async () => {
+      participantsService.ensureBoardParticipantAccess.mockResolvedValue(
+        undefined,
+      );
+      modelMethods.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([personalMethod]),
+      });
+      visibilityModel.find.mockReturnValue({
+        distinct: jest.fn().mockResolvedValue([]),
+      });
+
+      const methods = await service.findUserMethodsForBoard(
+        boardId.toString(),
+        userId,
+      );
+
+      expect(methods[0]).toEqual(expect.objectContaining({ enabled: true }));
+    });
+
+    it('hides by upserting an exclusion without modifying the payment method', async () => {
+      modelMethods.findById.mockResolvedValue(personalMethod);
+      visibilityModel.updateOne.mockResolvedValue({ upsertedCount: 1 });
+
+      const result = await service.updateBoardVisibility(
+        methodId.toString(),
+        boardId.toString(),
+        false,
+        userId,
+      );
+
+      expect(visibilityModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentMethodId: methodId }),
+        expect.any(Object),
+        { upsert: true },
+      );
+      expect(result.enabled).toBe(false);
+      expect(personalMethod).not.toHaveProperty('isActive');
+    });
+
+    it('re-enables by deleting the exclusion', async () => {
+      modelMethods.findById.mockResolvedValue(personalMethod);
+      visibilityModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+      const result = await service.updateBoardVisibility(
+        methodId.toString(),
+        boardId.toString(),
+        true,
+        userId,
+      );
+
+      expect(visibilityModel.deleteOne).toHaveBeenCalled();
+      expect(result.enabled).toBe(true);
+    });
+
+    it('rejects a participant who does not own the personal method', async () => {
+      modelMethods.findById.mockResolvedValue(personalMethod);
+
+      await expect(
+        service.updateBoardVisibility(
+          methodId.toString(),
+          boardId.toString(),
+          false,
+          otherUserId,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(visibilityModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it('rejects board-owned methods', async () => {
+      modelMethods.findById.mockResolvedValue({
+        _id: methodId,
+        ownerType: PaymentMethodOwnerType.BOARD,
+        tripId: boardId,
+      });
+
+      await expect(
+        service.updateBoardVisibility(
+          methodId.toString(),
+          boardId.toString(),
+          false,
+          userId,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects missing methods', async () => {
+      modelMethods.findById.mockResolvedValue(null);
+
+      await expect(
+        service.updateBoardVisibility(
+          methodId.toString(),
+          boardId.toString(),
+          false,
+          userId,
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('requires an existing board and owner participation', async () => {
+      modelMethods.findById.mockResolvedValue(personalMethod);
+      participantsService.ensureBoardParticipantAccess.mockRejectedValue(
+        new ForbiddenException('No tienes acceso'),
+      );
+
+      await expect(
+        service.updateBoardVisibility(
+          methodId.toString(),
+          boardId.toString(),
+          false,
+          userId,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(visibilityModel.updateOne).not.toHaveBeenCalled();
     });
   });
 });

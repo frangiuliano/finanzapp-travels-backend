@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
   OnModuleInit,
 } from '@nestjs/common';
@@ -20,6 +21,14 @@ import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { Card, CardDocument } from '../cards/card.schema';
 import { UserDocument } from '../users/user.schema';
 import { DEFAULT_PAYMENT_METHODS } from './constants/default-payment-methods';
+import {
+  PaymentMethodBoardExclusion,
+  PaymentMethodBoardExclusionDocument,
+} from './payment-method-board-exclusion.schema';
+
+export type PaymentMethodWithBoardVisibility = PaymentMethod & {
+  enabled: boolean;
+};
 
 @Injectable()
 export class PaymentMethodsService implements OnModuleInit {
@@ -30,6 +39,8 @@ export class PaymentMethodsService implements OnModuleInit {
     private paymentMethodModel: Model<PaymentMethodDocument>,
     @InjectModel(Card.name)
     private cardModel: Model<CardDocument>,
+    @InjectModel(PaymentMethodBoardExclusion.name)
+    private paymentMethodBoardExclusionModel: Model<PaymentMethodBoardExclusionDocument>,
     private participantsService: ParticipantsService,
   ) {}
 
@@ -233,6 +244,10 @@ export class PaymentMethodsService implements OnModuleInit {
     );
     const participantUserIds = this.extractParticipantUserIds(participants);
 
+    const disabledPersonalMethods = await this.paymentMethodBoardExclusionModel
+      .find({ tripId: new Types.ObjectId(boardId) })
+      .distinct('paymentMethodId');
+
     const activeFilter = includeInactive ? {} : { isActive: true };
 
     return this.paymentMethodModel
@@ -246,6 +261,7 @@ export class PaymentMethodsService implements OnModuleInit {
           {
             ownerType: PaymentMethodOwnerType.USER,
             userId: { $in: participantUserIds },
+            _id: { $nin: disabledPersonalMethods },
             ...activeFilter,
           },
         ],
@@ -254,6 +270,84 @@ export class PaymentMethodsService implements OnModuleInit {
       .populate('tripId', 'name')
       .sort({ isDefault: -1, ownerType: 1, kind: 1, name: 1 })
       .lean();
+  }
+
+  async findUserMethodsForBoard(
+    boardId: string,
+    userId: string,
+    includeInactive = false,
+  ): Promise<PaymentMethodWithBoardVisibility[]> {
+    await this.participantsService.ensureBoardParticipantAccess(
+      boardId,
+      userId,
+    );
+
+    const methods = await this.paymentMethodModel
+      .find({
+        ownerType: PaymentMethodOwnerType.USER,
+        userId: new Types.ObjectId(userId),
+        ...(includeInactive ? {} : { isActive: true }),
+      })
+      .populate('userId', 'firstName lastName')
+      .sort({ kind: 1, name: 1 })
+      .lean();
+
+    const disabledIds = await this.paymentMethodBoardExclusionModel
+      .find({
+        tripId: new Types.ObjectId(boardId),
+        paymentMethodId: { $in: methods.map((method) => method._id) },
+      })
+      .distinct('paymentMethodId');
+    const disabledIdSet = new Set(disabledIds.map((id) => id.toString()));
+
+    return methods.map((method) => ({
+      ...method,
+      enabled: !disabledIdSet.has(method._id.toString()),
+    })) as PaymentMethodWithBoardVisibility[];
+  }
+
+  async updateBoardVisibility(
+    paymentMethodId: string,
+    boardId: string,
+    enabled: boolean,
+    userId: string,
+  ): Promise<{ paymentMethodId: string; boardId: string; enabled: boolean }> {
+    const method = await this.paymentMethodModel.findById(paymentMethodId);
+
+    if (!method) {
+      throw new NotFoundException('Medio de pago no encontrado');
+    }
+    if (method.ownerType !== PaymentMethodOwnerType.USER) {
+      throw new BadRequestException(
+        'La disponibilidad por tablero solo aplica a medios personales',
+      );
+    }
+    if (method.userId?.toString() !== userId) {
+      throw new ForbiddenException(
+        'Solo el propietario puede cambiar la disponibilidad de este medio de pago',
+      );
+    }
+
+    await this.participantsService.ensureBoardParticipantAccess(
+      boardId,
+      userId,
+    );
+
+    const relation = {
+      paymentMethodId: method._id,
+      tripId: new Types.ObjectId(boardId),
+    };
+    if (enabled) {
+      await this.paymentMethodBoardExclusionModel.deleteOne(relation);
+    } else {
+      await this.paymentMethodBoardExclusionModel.updateOne(
+        relation,
+        { $setOnInsert: relation },
+        { upsert: true },
+      );
+    }
+
+    return { paymentMethodId, boardId, enabled };
   }
 
   async findOne(id: string, userId: string): Promise<PaymentMethod> {
@@ -329,10 +423,14 @@ export class PaymentMethodsService implements OnModuleInit {
   }
 
   async deleteByBoard(boardId: string): Promise<void> {
-    await this.paymentMethodModel.deleteMany({
-      ownerType: PaymentMethodOwnerType.BOARD,
-      tripId: new Types.ObjectId(boardId),
-    });
+    const tripId = new Types.ObjectId(boardId);
+    await Promise.all([
+      this.paymentMethodModel.deleteMany({
+        ownerType: PaymentMethodOwnerType.BOARD,
+        tripId,
+      }),
+      this.paymentMethodBoardExclusionModel.deleteMany({ tripId }),
+    ]);
   }
 
   private async ensureCanAccess(

@@ -17,6 +17,7 @@ import { UpdatePaymentMethodDto } from './dto/update-payment-method.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { UserDocument } from '../users/user.schema';
+import { UpdateBoardVisibilityDto } from './dto/update-board-visibility.dto';
 
 @Controller('payment-methods')
 @UseGuards(JwtAuthGuard)
@@ -51,6 +52,16 @@ export class PaymentMethodsController {
     const inactive = includeInactive === 'true';
 
     if (scope === 'user') {
+      if (resolvedBoardId) {
+        const paymentMethods =
+          await this.paymentMethodsService.findUserMethodsForBoard(
+            resolvedBoardId,
+            user._id.toString(),
+            inactive,
+          );
+        return { paymentMethods };
+      }
+
       const paymentMethods = await this.paymentMethodsService.findByUser(
         user._id.toString(),
         inactive,
@@ -82,6 +93,28 @@ export class PaymentMethodsController {
       inactive,
     );
     return { paymentMethods };
+  }
+
+  @Patch(':paymentMethodId/boards/:boardId/visibility')
+  async updateBoardVisibility(
+    @Param('paymentMethodId') paymentMethodId: string,
+    @Param('boardId') boardId: string,
+    @Body() dto: UpdateBoardVisibilityDto,
+    @GetUser() user: UserDocument,
+  ) {
+    const visibility = await this.paymentMethodsService.updateBoardVisibility(
+      paymentMethodId,
+      boardId,
+      dto.enabled,
+      user._id.toString(),
+    );
+
+    return {
+      message: dto.enabled
+        ? 'Medio de pago habilitado en el tablero'
+        : 'Medio de pago ocultado en el tablero',
+      visibility,
+    };
   }
 
   @Get(':id')

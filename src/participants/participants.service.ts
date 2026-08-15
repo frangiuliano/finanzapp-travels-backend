@@ -83,6 +83,14 @@ export class ParticipantsService {
     }
   }
 
+  async ensureBoardParticipantAccess(
+    boardId: string,
+    userId: string,
+  ): Promise<void> {
+    await this.ensureBoardExists(boardId);
+    await this.ensureParticipantAccess(boardId, userId);
+  }
+
   private async checkExistingUserAndParticipant(
     tripId: string,
     email: string,
