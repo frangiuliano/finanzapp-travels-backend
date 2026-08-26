@@ -16,6 +16,20 @@ import { Invitation } from '../participants/schemas/invitation.schema';
 import { Types } from 'mongoose';
 import { CategoriesService } from '../categories/categories.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import { Expense } from '../expenses/expense.schema';
+import { Income } from '../incomes/income.schema';
+import { RecurringIncome } from '../recurring-incomes/recurring-income.schema';
+import { RecurringIncomeVersion } from '../recurring-incomes/recurring-income-version.schema';
+import { RecurringExpense } from '../recurring-expenses/recurring-expense.schema';
+import { RecurringExpenseVersion } from '../recurring-expenses/recurring-expense-version.schema';
+import { InstallmentPlan } from '../installment-plans/installment-plan.schema';
+import { BoardMonthBudget } from '../board-month-budgets/board-month-budget.schema';
+import { Card } from '../cards/card.schema';
+import { User } from '../users/user.schema';
+import { BotUpdate } from '../bot/bot-update.schema';
+import { PaymentMethod } from '../payment-methods/payment-method.schema';
+import { BillingPeriod } from '../billing-periods/billing-period.schema';
+import { InAppNotification } from '../in-app-notifications/in-app-notification.schema';
 
 describe('BoardsService', () => {
   let service: BoardsService;
@@ -37,6 +51,7 @@ describe('BoardsService', () => {
     find: jest.fn(),
     findOne: jest.fn(),
     deleteMany: jest.fn(),
+    updateMany: jest.fn(),
   };
 
   const budgetModel = {
@@ -46,6 +61,43 @@ describe('BoardsService', () => {
   const invitationModel = {
     deleteMany: jest.fn(),
   };
+
+  const cascadeModel = {
+    deleteMany: jest.fn(),
+    updateMany: jest.fn(),
+  };
+
+  const recurringModel = {
+    ...cascadeModel,
+    find: jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    }),
+  };
+
+  const cascadeProviders = [
+    { provide: getModelToken(Expense.name), useValue: cascadeModel },
+    { provide: getModelToken(Income.name), useValue: cascadeModel },
+    { provide: getModelToken(RecurringIncome.name), useValue: recurringModel },
+    {
+      provide: getModelToken(RecurringIncomeVersion.name),
+      useValue: cascadeModel,
+    },
+    { provide: getModelToken(RecurringExpense.name), useValue: recurringModel },
+    {
+      provide: getModelToken(RecurringExpenseVersion.name),
+      useValue: cascadeModel,
+    },
+    { provide: getModelToken(InstallmentPlan.name), useValue: cascadeModel },
+    { provide: getModelToken(BoardMonthBudget.name), useValue: cascadeModel },
+    { provide: getModelToken(Card.name), useValue: recurringModel },
+    { provide: getModelToken(User.name), useValue: cascadeModel },
+    { provide: getModelToken(BotUpdate.name), useValue: cascadeModel },
+    { provide: getModelToken(PaymentMethod.name), useValue: recurringModel },
+    { provide: getModelToken(BillingPeriod.name), useValue: cascadeModel },
+    { provide: getModelToken(InAppNotification.name), useValue: cascadeModel },
+  ];
 
   const categoriesService = {
     seedDefaults: jest.fn().mockResolvedValue([]),
@@ -71,6 +123,7 @@ describe('BoardsService', () => {
         },
         { provide: getModelToken(Budget.name), useValue: budgetModel },
         { provide: getModelToken(Invitation.name), useValue: invitationModel },
+        ...cascadeProviders,
         { provide: CategoriesService, useValue: categoriesService },
         { provide: PaymentMethodsService, useValue: paymentMethodsService },
       ],
@@ -123,6 +176,7 @@ describe('BoardsService', () => {
             provide: getModelToken(Invitation.name),
             useValue: invitationModel,
           },
+          ...cascadeProviders,
           { provide: CategoriesService, useValue: categoriesService },
           { provide: PaymentMethodsService, useValue: paymentMethodsService },
         ],
@@ -176,6 +230,7 @@ describe('BoardsService', () => {
             provide: getModelToken(Invitation.name),
             useValue: invitationModel,
           },
+          ...cascadeProviders,
           { provide: CategoriesService, useValue: categoriesService },
           { provide: PaymentMethodsService, useValue: paymentMethodsService },
         ],
@@ -362,6 +417,41 @@ describe('BoardsService', () => {
 
       await service.update(boardId.toString(), { name: 'Nuevo' }, userId);
       expect(save).toHaveBeenCalled();
+    });
+  });
+
+  describe('remove', () => {
+    it('deletes owned data and detaches travel boards from an everyday board', async () => {
+      participantModel.findOne.mockResolvedValue({
+        role: ParticipantRole.OWNER,
+      });
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.EVERYDAY,
+      });
+
+      await service.remove(boardId.toString(), userId);
+
+      expect(boardModel.updateMany).toHaveBeenCalledWith(
+        { parentBoardId: boardId },
+        { $unset: { parentBoardId: 1 } },
+      );
+      expect(participantModel.updateMany).toHaveBeenCalledWith(
+        { linkedEverydayBoardId: boardId },
+        { $unset: { linkedEverydayBoardId: 1 } },
+      );
+      expect(cascadeModel.deleteMany).toHaveBeenCalledWith({
+        tripId: boardId,
+      });
+      expect(categoriesService.deleteByBoard).toHaveBeenCalledWith(
+        boardId.toString(),
+      );
+      expect(paymentMethodsService.deleteByBoard).toHaveBeenCalledWith(
+        boardId.toString(),
+      );
+      expect(boardModel.findByIdAndDelete).toHaveBeenCalledWith(
+        boardId.toString(),
+      );
     });
   });
 });

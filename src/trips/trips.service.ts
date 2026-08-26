@@ -26,6 +26,48 @@ import { UpdateBoardDto } from './dto/update-board.dto';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 import { CategoriesService } from '../categories/categories.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import { Expense, ExpenseDocument } from '../expenses/expense.schema';
+import { Income, IncomeDocument } from '../incomes/income.schema';
+import {
+  RecurringIncome,
+  RecurringIncomeDocument,
+} from '../recurring-incomes/recurring-income.schema';
+import {
+  RecurringIncomeVersion,
+  RecurringIncomeVersionDocument,
+} from '../recurring-incomes/recurring-income-version.schema';
+import {
+  RecurringExpense,
+  RecurringExpenseDocument,
+} from '../recurring-expenses/recurring-expense.schema';
+import {
+  RecurringExpenseVersion,
+  RecurringExpenseVersionDocument,
+} from '../recurring-expenses/recurring-expense-version.schema';
+import {
+  InstallmentPlan,
+  InstallmentPlanDocument,
+} from '../installment-plans/installment-plan.schema';
+import {
+  BoardMonthBudget,
+  BoardMonthBudgetDocument,
+} from '../board-month-budgets/board-month-budget.schema';
+import { Card, CardDocument } from '../cards/card.schema';
+import { User, UserDocument } from '../users/user.schema';
+import { BotUpdate, BotUpdateDocument } from '../bot/bot-update.schema';
+import {
+  PaymentMethod,
+  PaymentMethodDocument,
+  PaymentMethodOwnerType,
+} from '../payment-methods/payment-method.schema';
+import {
+  BillingPeriod,
+  BillingPeriodDocument,
+} from '../billing-periods/billing-period.schema';
+import {
+  InAppNotification,
+  InAppNotificationDocument,
+} from '../in-app-notifications/in-app-notification.schema';
 
 @Injectable()
 export class BoardsService implements OnModuleInit {
@@ -38,6 +80,30 @@ export class BoardsService implements OnModuleInit {
     @InjectModel(Budget.name) private budgetModel: Model<BudgetDocument>,
     @InjectModel(Invitation.name)
     private invitationModel: Model<InvitationDocument>,
+    @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
+    @InjectModel(Income.name) private incomeModel: Model<IncomeDocument>,
+    @InjectModel(RecurringIncome.name)
+    private recurringIncomeModel: Model<RecurringIncomeDocument>,
+    @InjectModel(RecurringIncomeVersion.name)
+    private recurringIncomeVersionModel: Model<RecurringIncomeVersionDocument>,
+    @InjectModel(RecurringExpense.name)
+    private recurringExpenseModel: Model<RecurringExpenseDocument>,
+    @InjectModel(RecurringExpenseVersion.name)
+    private recurringExpenseVersionModel: Model<RecurringExpenseVersionDocument>,
+    @InjectModel(InstallmentPlan.name)
+    private installmentPlanModel: Model<InstallmentPlanDocument>,
+    @InjectModel(BoardMonthBudget.name)
+    private boardMonthBudgetModel: Model<BoardMonthBudgetDocument>,
+    @InjectModel(Card.name) private cardModel: Model<CardDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(BotUpdate.name)
+    private botUpdateModel: Model<BotUpdateDocument>,
+    @InjectModel(PaymentMethod.name)
+    private paymentMethodModel: Model<PaymentMethodDocument>,
+    @InjectModel(BillingPeriod.name)
+    private billingPeriodModel: Model<BillingPeriodDocument>,
+    @InjectModel(InAppNotification.name)
+    private inAppNotificationModel: Model<InAppNotificationDocument>,
     @Inject(forwardRef(() => CategoriesService))
     private categoriesService: CategoriesService,
     @Inject(forwardRef(() => PaymentMethodsService))
@@ -464,11 +530,117 @@ export class BoardsService implements OnModuleInit {
 
     const boardId = new Types.ObjectId(id);
 
-    await this.budgetModel.deleteMany({ tripId: boardId });
-    await this.categoriesService.deleteByBoard(id);
-    await this.paymentMethodsService.deleteByBoard(id);
-    await this.participantModel.deleteMany({ tripId: boardId });
-    await this.invitationModel.deleteMany({ tripId: boardId });
+    const [
+      recurringIncomes,
+      recurringExpenses,
+      boardPaymentMethods,
+      legacyBoardCards,
+    ] = await Promise.all([
+      this.recurringIncomeModel.find({ tripId: boardId }).select('_id').lean(),
+      this.recurringExpenseModel.find({ tripId: boardId }).select('_id').lean(),
+      this.paymentMethodModel
+        .find({ ownerType: PaymentMethodOwnerType.BOARD, tripId: boardId })
+        .select('_id')
+        .lean(),
+      this.cardModel.find({ tripId: boardId }).select('_id').lean(),
+    ]);
+    const recurringIncomeIds = recurringIncomes.map((item) => item._id);
+    const recurringExpenseIds = recurringExpenses.map((item) => item._id);
+    const boardPaymentMethodIds = boardPaymentMethods.map((item) => item._id);
+    const legacyBoardCardIds = legacyBoardCards.map((item) => item._id);
+
+    // Old data may reference a board-owned method from a different board.
+    // Preserve those movements/rules but remove the soon-to-be-invalid link.
+    await Promise.all([
+      this.expenseModel.updateMany(
+        {
+          tripId: { $ne: boardId },
+          $or: [
+            { paymentMethodId: { $in: boardPaymentMethodIds } },
+            {
+              cardId: {
+                $in: [...boardPaymentMethodIds, ...legacyBoardCardIds],
+              },
+            },
+          ],
+        },
+        { $unset: { paymentMethodId: 1, cardId: 1 } },
+      ),
+      this.recurringExpenseModel.updateMany(
+        {
+          tripId: { $ne: boardId },
+          paymentMethodId: { $in: boardPaymentMethodIds },
+        },
+        { $unset: { paymentMethodId: 1 } },
+      ),
+      this.installmentPlanModel.updateMany(
+        {
+          tripId: { $ne: boardId },
+          paymentMethodId: { $in: boardPaymentMethodIds },
+        },
+        { $unset: { paymentMethodId: 1 } },
+      ),
+    ]);
+
+    await Promise.all([
+      this.recurringIncomeVersionModel.deleteMany({
+        recurringIncomeId: { $in: recurringIncomeIds },
+      }),
+      this.recurringExpenseVersionModel.deleteMany({
+        recurringExpenseId: { $in: recurringExpenseIds },
+      }),
+      this.expenseModel.deleteMany({ tripId: boardId }),
+      this.incomeModel.deleteMany({ tripId: boardId }),
+      this.installmentPlanModel.deleteMany({ tripId: boardId }),
+      this.boardMonthBudgetModel.deleteMany({ tripId: boardId }),
+      this.budgetModel.deleteMany({ tripId: boardId }),
+      this.cardModel.deleteMany({ tripId: boardId }),
+      this.participantModel.deleteMany({ tripId: boardId }),
+      this.invitationModel.deleteMany({ tripId: boardId }),
+      this.billingPeriodModel.deleteMany({
+        paymentMethodId: { $in: boardPaymentMethodIds },
+      }),
+      this.inAppNotificationModel.deleteMany({
+        'payload.paymentMethodId': {
+          $in: boardPaymentMethodIds.flatMap((methodId) => [
+            methodId,
+            methodId.toString(),
+          ]),
+        },
+      }),
+    ]);
+    await Promise.all([
+      this.recurringIncomeModel.deleteMany({ tripId: boardId }),
+      this.recurringExpenseModel.deleteMany({ tripId: boardId }),
+      this.categoriesService.deleteByBoard(id),
+      this.paymentMethodsService.deleteByBoard(id),
+    ]);
+
+    // Travel boards are independent records: removing an everyday board only
+    // detaches its children instead of deleting their history. This final
+    // phase runs after the idempotent cleanup so a failed cleanup can be
+    // safely retried while the board and its links still exist.
+    await Promise.all([
+      this.boardModel.updateMany(
+        { parentBoardId: boardId },
+        { $unset: { parentBoardId: 1 } },
+      ),
+      this.participantModel.updateMany(
+        { linkedEverydayBoardId: boardId },
+        { $unset: { linkedEverydayBoardId: 1 } },
+      ),
+      this.userModel.updateMany(
+        { activeBoardId: boardId },
+        { $set: { activeBoardId: null } },
+      ),
+      this.botUpdateModel.updateMany(
+        { currentTripId: boardId },
+        {
+          $set: { state: 'idle' },
+          $unset: { currentTripId: 1, pendingExpense: 1 },
+        },
+      ),
+    ]);
     await this.boardModel.findByIdAndDelete(id);
   }
 }

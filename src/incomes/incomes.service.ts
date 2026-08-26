@@ -89,6 +89,9 @@ export class IncomesService {
 
     await this.participantsService.ensureParticipantAccess(boardId, userId);
     const board = await this.boardsService.findByIdOrFail(boardId);
+    const incomeDate = createIncomeDto.incomeDate
+      ? parseIncomeDate(createIncomeDto.incomeDate)
+      : new Date();
     const income = new this.incomeModel({
       tripId: new Types.ObjectId(boardId),
       amount: createIncomeDto.amount,
@@ -96,10 +99,11 @@ export class IncomesService {
         createIncomeDto.currency ?? board.baseCurrency ?? DEFAULT_CURRENCY,
       label: createIncomeDto.label.trim(),
       description: createIncomeDto.description?.trim(),
-      incomeDate: createIncomeDto.incomeDate
-        ? parseIncomeDate(createIncomeDto.incomeDate)
-        : new Date(),
-      status: IncomeStatus.CONFIRMED,
+      incomeDate,
+      status:
+        incomeDate.getTime() > Date.now()
+          ? IncomeStatus.PENDING
+          : IncomeStatus.CONFIRMED,
       createdBy: new Types.ObjectId(userId),
     });
 

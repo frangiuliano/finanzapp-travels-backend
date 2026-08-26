@@ -136,6 +136,28 @@ describe('IncomesService', () => {
         service.create({ amount: 100, label: 'Test' } as never, userId),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('should create a future one-time income as pending', async () => {
+      saveMock.mockResolvedValue({ _id: incomeId });
+
+      await service.create(
+        {
+          boardId: boardId.toString(),
+          amount: 500,
+          label: 'Aguinaldo',
+          incomeDate: '2099-12-15',
+        },
+        userId,
+      );
+
+      expect(IncomeModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          label: 'Aguinaldo',
+          status: 'pending',
+          incomeDate: new Date('2099-12-15'),
+        }),
+      );
+    });
   });
 
   describe('findAllByBoard', () => {
