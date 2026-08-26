@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   Max,
@@ -8,6 +9,7 @@ import {
   MinLength,
   Matches,
 } from 'class-validator';
+import { PAYMENT_METHOD_INSTITUTION_CODES } from '../constants/payment-method-institutions';
 
 export class UpdatePaymentMethodDto {
   @IsOptional()
@@ -17,6 +19,20 @@ export class UpdatePaymentMethodDto {
     message: 'El nombre no puede tener más de 100 caracteres',
   })
   name?: string;
+
+  @IsOptional()
+  @IsString({ message: 'La institución debe ser texto' })
+  @MaxLength(80, {
+    message: 'La institución no puede tener más de 80 caracteres',
+  })
+  institution?: string;
+
+  @IsOptional()
+  @IsString({ message: 'El código de institución debe ser texto' })
+  @IsIn(PAYMENT_METHOD_INSTITUTION_CODES, {
+    message: 'La institución seleccionada no es válida',
+  })
+  institutionCode?: string | null;
 
   @IsOptional()
   @IsString({ message: 'Los últimos 4 dígitos deben ser texto' })

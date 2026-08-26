@@ -22,6 +22,11 @@ import { Card, CardDocument } from '../cards/card.schema';
 import { UserDocument } from '../users/user.schema';
 import { DEFAULT_PAYMENT_METHODS } from './constants/default-payment-methods';
 import {
+  findPaymentMethodInstitution,
+  PAYMENT_METHOD_INSTITUTIONS,
+  PaymentMethodInstitution,
+} from './constants/payment-method-institutions';
+import {
   PaymentMethodBoardExclusion,
   PaymentMethodBoardExclusionDocument,
 } from './payment-method-board-exclusion.schema';
@@ -81,6 +86,12 @@ export class PaymentMethodsService implements OnModuleInit {
     }
   }
 
+  listInstitutions(): PaymentMethodInstitution[] {
+    return PAYMENT_METHOD_INSTITUTIONS.filter(
+      (institution) => institution.isActive,
+    ).sort((left, right) => left.sortOrder - right.sortOrder);
+  }
+
   async seedDefaults(boardId: string): Promise<PaymentMethod[]> {
     const tripId = new Types.ObjectId(boardId);
     const docs = DEFAULT_PAYMENT_METHODS.map((seed) => ({
@@ -118,6 +129,10 @@ export class PaymentMethodsService implements OnModuleInit {
     userId: string,
   ): Promise<PaymentMethod> {
     this.assertKindAllowed(createDto.kind);
+    const institution = this.resolveInstitution(
+      createDto.institutionCode,
+      createDto.institution,
+    );
 
     if (createDto.kind === PaymentMethodKind.CASH) {
       throw new BadRequestException(
@@ -131,6 +146,8 @@ export class PaymentMethodsService implements OnModuleInit {
         kind: createDto.kind,
         userId: new Types.ObjectId(userId),
         name: createDto.name.trim(),
+        institution: institution.name,
+        institutionCode: institution.code,
         lastFourDigits: createDto.lastFourDigits,
         brand: createDto.brand,
         closingDay: this.resolveClosingDay(
@@ -156,6 +173,8 @@ export class PaymentMethodsService implements OnModuleInit {
       kind: createDto.kind,
       tripId: new Types.ObjectId(boardId),
       name: createDto.name.trim(),
+      institution: institution.name,
+      institutionCode: institution.code,
       lastFourDigits: createDto.lastFourDigits,
       brand: createDto.brand,
       closingDay: this.resolveClosingDay(createDto.kind, createDto.closingDay),
@@ -424,6 +443,17 @@ export class PaymentMethodsService implements OnModuleInit {
     if (updateDto.name !== undefined) {
       method.name = updateDto.name.trim();
     }
+    if (
+      updateDto.institution !== undefined ||
+      updateDto.institutionCode !== undefined
+    ) {
+      const institution = this.resolveInstitution(
+        updateDto.institutionCode ?? undefined,
+        updateDto.institution,
+      );
+      method.institution = institution.name;
+      method.institutionCode = institution.code;
+    }
     if (updateDto.lastFourDigits !== undefined) {
       method.lastFourDigits = updateDto.lastFourDigits;
     }
@@ -444,6 +474,22 @@ export class PaymentMethodsService implements OnModuleInit {
     }
 
     return method.save();
+  }
+
+  private resolveInstitution(
+    code?: string,
+    customName?: string,
+  ): { code?: string; name?: string } {
+    if (!code) {
+      return { name: customName?.trim() || undefined };
+    }
+
+    const institution = findPaymentMethodInstitution(code);
+    if (!institution) {
+      throw new BadRequestException('La institución seleccionada no es válida');
+    }
+
+    return { code: institution.code, name: institution.displayName };
   }
 
   async archive(id: string, userId: string): Promise<PaymentMethod> {

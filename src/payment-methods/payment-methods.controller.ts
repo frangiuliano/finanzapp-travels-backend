@@ -25,6 +25,13 @@ import { UpdateBoardVisibilityDto } from './dto/update-board-visibility.dto';
 export class PaymentMethodsController {
   constructor(private readonly paymentMethodsService: PaymentMethodsService) {}
 
+  @Get('institutions')
+  listInstitutions() {
+    return {
+      institutions: this.paymentMethodsService.listInstitutions(),
+    };
+  }
+
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(

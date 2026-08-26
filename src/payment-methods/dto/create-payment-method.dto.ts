@@ -1,5 +1,6 @@
 import {
   IsEnum,
+  IsIn,
   IsMongoId,
   IsNotEmpty,
   IsOptional,
@@ -15,6 +16,7 @@ import {
   PaymentMethodKind,
   PaymentMethodOwnerType,
 } from '../payment-method.schema';
+import { PAYMENT_METHOD_INSTITUTION_CODES } from '../constants/payment-method-institutions';
 
 export class CreatePaymentMethodDto {
   @IsEnum(PaymentMethodOwnerType, {
@@ -54,6 +56,20 @@ export class CreatePaymentMethodDto {
     message: 'El nombre no puede tener más de 100 caracteres',
   })
   name: string;
+
+  @IsOptional()
+  @IsString({ message: 'La institución debe ser texto' })
+  @MaxLength(80, {
+    message: 'La institución no puede tener más de 80 caracteres',
+  })
+  institution?: string;
+
+  @IsOptional()
+  @IsString({ message: 'El código de institución debe ser texto' })
+  @IsIn(PAYMENT_METHOD_INSTITUTION_CODES, {
+    message: 'La institución seleccionada no es válida',
+  })
+  institutionCode?: string;
 
   @ValidateIf(
     (o: CreatePaymentMethodDto) =>

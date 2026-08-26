@@ -88,6 +88,8 @@ describe('PaymentMethodsService', () => {
           ownerType: PaymentMethodOwnerType.USER,
           kind: PaymentMethodKind.CREDIT,
           name: 'Visa',
+          institution: 'Nombre manipulable',
+          institutionCode: 'galicia',
           lastFourDigits: '4242',
           closingDay: 14,
         },
@@ -96,6 +98,23 @@ describe('PaymentMethodsService', () => {
 
       expect(result.closingDay).toBe(14);
       expect(result.kind).toBe(PaymentMethodKind.CREDIT);
+      expect(result.institution).toBe('Banco Galicia');
+      expect(result.institutionCode).toBe('galicia');
+    });
+
+    it('should reject an unknown institution code', async () => {
+      await expect(
+        service.create(
+          {
+            ownerType: PaymentMethodOwnerType.USER,
+            kind: PaymentMethodKind.DEBIT,
+            name: 'Débito',
+            institutionCode: 'unknown-bank',
+            lastFourDigits: '4242',
+          },
+          userId,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('should reject closingDay above 28', async () => {
@@ -143,6 +162,18 @@ describe('PaymentMethodsService', () => {
       expect(modelMethods.insertMany).toHaveBeenCalled();
       expect(result).toHaveLength(1);
       expect(result[0].kind).toBe(PaymentMethodKind.CASH);
+    });
+  });
+
+  describe('institution catalog', () => {
+    it('returns active institutions in product order', () => {
+      const institutions = service.listInstitutions();
+
+      expect(institutions.length).toBeGreaterThan(0);
+      expect(institutions.every(({ isActive }) => isActive)).toBe(true);
+      expect(institutions[0]).toEqual(
+        expect.objectContaining({ code: 'galicia', type: 'bank' }),
+      );
     });
   });
 

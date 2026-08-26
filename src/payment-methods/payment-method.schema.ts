@@ -37,6 +37,12 @@ export class PaymentMethod {
   @Prop({ required: true, maxlength: 100, trim: true })
   name: string;
 
+  @Prop({ maxlength: 80, trim: true })
+  institution?: string;
+
+  @Prop({ maxlength: 50, trim: true })
+  institutionCode?: string;
+
   @Prop({ minlength: 4, maxlength: 4 })
   lastFourDigits?: string;
 
