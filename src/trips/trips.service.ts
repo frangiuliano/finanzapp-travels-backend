@@ -145,7 +145,7 @@ export class BoardsService implements OnModuleInit {
       );
     }
     const board = new this.boardModel({
-      ...createBoardDto,
+      name: createBoardDto.name,
       baseCurrency:
         createBoardDto.baseCurrency ||
         parentBoard?.baseCurrency ||
@@ -165,7 +165,10 @@ export class BoardsService implements OnModuleInit {
     });
 
     const boardId = savedBoard._id.toString();
-    await this.categoriesService.seedDefaults(boardId);
+    await this.categoriesService.seedDefaults(
+      boardId,
+      createBoardDto.categoryNames,
+    );
     await this.paymentMethodsService.seedDefaults(boardId);
 
     return savedBoard;
@@ -186,7 +189,7 @@ export class BoardsService implements OnModuleInit {
     }
 
     const boards = await this.boardModel
-      .find({ _id: { $in: boardIds } })
+      .find({ _id: { $in: boardIds }, archivedAt: { $exists: false } })
       .populate('createdBy', 'firstName lastName email')
       .sort({ createdAt: -1 })
       .lean();
@@ -202,6 +205,56 @@ export class BoardsService implements OnModuleInit {
         linkedEverydayBoardId: participant?.linkedEverydayBoardId?.toString(),
       };
     });
+  }
+
+  async findArchived(
+    userId: string,
+  ): Promise<(Board & { userRole: ParticipantRole })[]> {
+    const participants = await this.participantModel
+      .find({ userId: new Types.ObjectId(userId) })
+      .select('tripId role linkedEverydayBoardId')
+      .lean();
+    if (participants.length === 0) return [];
+
+    const boards = await this.boardModel
+      .find({
+        _id: { $in: participants.map((item) => item.tripId) },
+        archivedAt: { $exists: true },
+      })
+      .populate('createdBy', 'firstName lastName email')
+      .sort({ archivedAt: -1 })
+      .lean();
+
+    return boards.map((board) => ({
+      ...board,
+      type: board.type ?? BoardType.TRAVEL,
+      userRole:
+        participants.find(
+          (item) => item.tripId.toString() === board._id.toString(),
+        )?.role ?? ParticipantRole.MEMBER,
+    }));
+  }
+
+  async setArchived(id: string, userId: string, archived: boolean) {
+    const participant = await this.participantModel.findOne({
+      tripId: new Types.ObjectId(id),
+      userId: new Types.ObjectId(userId),
+    });
+    if (!participant || participant.role !== ParticipantRole.OWNER) {
+      throw new ForbiddenException(
+        'Solo el propietario puede archivar el tablero',
+      );
+    }
+    const board = await this.boardModel.findById(id);
+    if (!board) throw new NotFoundException('Tablero no encontrado');
+    if (board.type === BoardType.EVERYDAY) {
+      throw new BadRequestException(
+        'El tablero principal no se puede archivar',
+      );
+    }
+    board.archivedAt = archived ? new Date() : undefined;
+    await board.save();
+    return this.findOne(id, userId);
   }
 
   async findOne(

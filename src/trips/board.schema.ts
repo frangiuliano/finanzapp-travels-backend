@@ -30,6 +30,9 @@ export class Board {
 
   @Prop({ default: Date.now })
   createdAt: Date;
+
+  @Prop({ type: Date, required: false, index: true })
+  archivedAt?: Date;
 }
 
 export type BoardDocument = Board & Document;

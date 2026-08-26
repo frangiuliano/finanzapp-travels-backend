@@ -198,6 +198,7 @@ describe('BoardsService', () => {
       );
       expect(categoriesService.seedDefaults).toHaveBeenCalledWith(
         boardId.toString(),
+        undefined,
       );
       expect(paymentMethodsService.seedDefaults).toHaveBeenCalledWith(
         boardId.toString(),
@@ -452,6 +453,41 @@ describe('BoardsService', () => {
       expect(boardModel.findByIdAndDelete).toHaveBeenCalledWith(
         boardId.toString(),
       );
+    });
+  });
+
+  describe('archive', () => {
+    it('archives a travel board owned by the user', async () => {
+      participantModel.findOne.mockResolvedValue({
+        role: ParticipantRole.OWNER,
+      });
+      const board = {
+        _id: boardId,
+        type: BoardType.TRAVEL,
+        archivedAt: undefined,
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      boardModel.findById.mockResolvedValue(board);
+      jest.spyOn(service, 'findOne').mockResolvedValue({} as never);
+
+      await service.setArchived(boardId.toString(), userId, true);
+
+      expect(board.archivedAt).toBeInstanceOf(Date);
+      expect(board.save).toHaveBeenCalled();
+    });
+
+    it('rejects archiving an everyday board', async () => {
+      participantModel.findOne.mockResolvedValue({
+        role: ParticipantRole.OWNER,
+      });
+      boardModel.findById.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.EVERYDAY,
+      });
+
+      await expect(
+        service.setArchived(boardId.toString(), userId, true),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

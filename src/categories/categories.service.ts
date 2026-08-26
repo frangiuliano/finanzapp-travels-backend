@@ -23,9 +23,17 @@ export class CategoriesService {
     private participantsService: ParticipantsService,
   ) {}
 
-  async seedDefaults(boardId: string): Promise<Category[]> {
+  async seedDefaults(
+    boardId: string,
+    selectedNames: string[] = DEFAULT_CATEGORIES.map(({ name }) => name),
+  ): Promise<Category[]> {
     const tripId = new Types.ObjectId(boardId);
-    const docs = DEFAULT_CATEGORIES.map((seed) => ({
+    const selected = new Set(selectedNames.map((name) => name.trim()));
+    const seeds = DEFAULT_CATEGORIES.filter(({ name }) => selected.has(name));
+    if (seeds.length !== selected.size) {
+      throw new BadRequestException('Una o más categorías no son válidas');
+    }
+    const docs = seeds.map((seed) => ({
       tripId,
       name: seed.name,
       icon: seed.icon,
@@ -78,11 +86,6 @@ export class CategoriesService {
     await this.participantsService.ensureParticipantAccess(boardId, userId);
 
     const tripId = new Types.ObjectId(boardId);
-    const categoryCount = await this.categoryModel.countDocuments({ tripId });
-    if (categoryCount === 0) {
-      await this.seedDefaults(boardId);
-    }
-
     const filter: Record<string, unknown> = {
       tripId,
     };

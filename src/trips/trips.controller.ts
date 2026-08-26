@@ -49,6 +49,32 @@ export class BoardsController {
     };
   }
 
+  @Get('archived')
+  async findArchived(@GetUser() user: UserDocument) {
+    const boards = await this.boardsService.findArchived(user._id.toString());
+    return { boards, trips: boards };
+  }
+
+  @Patch(':id/archive')
+  async archive(@Param('id') id: string, @GetUser() user: UserDocument) {
+    const board = await this.boardsService.setArchived(
+      id,
+      user._id.toString(),
+      true,
+    );
+    return { message: 'Tablero archivado', board, trip: board };
+  }
+
+  @Patch(':id/unarchive')
+  async unarchive(@Param('id') id: string, @GetUser() user: UserDocument) {
+    const board = await this.boardsService.setArchived(
+      id,
+      user._id.toString(),
+      false,
+    );
+    return { message: 'Tablero desarchivado', board, trip: board };
+  }
+
   @Get(':id')
   async findOne(@Param('id') id: string, @GetUser() user: UserDocument) {
     const board = await this.boardsService.findOne(id, user._id.toString());

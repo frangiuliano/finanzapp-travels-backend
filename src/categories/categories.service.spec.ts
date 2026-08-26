@@ -105,27 +105,18 @@ describe('CategoriesService', () => {
       expect(result).toHaveLength(1);
     });
 
-    it('should seed defaults when board has no categories', async () => {
+    it('should keep a board without categories empty', async () => {
       participantsService.ensureParticipantAccess.mockResolvedValue(undefined);
-      categoryModel.countDocuments.mockResolvedValue(0);
-      const seeded = DEFAULT_CATEGORIES.map((item) => ({
-        _id: new Types.ObjectId(),
-        tripId: boardId,
-        ...item,
-        isActive: true,
-        isDefault: true,
-      }));
-      categoryModel.insertMany.mockResolvedValue(seeded);
       const chain = {
         sort: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(seeded),
+        lean: jest.fn().mockResolvedValue([]),
       };
       categoryModel.find.mockReturnValue(chain);
 
       const result = await service.findAllByBoard(boardId.toString(), userId);
 
-      expect(categoryModel.insertMany).toHaveBeenCalled();
-      expect(result).toHaveLength(DEFAULT_CATEGORIES.length);
+      expect(categoryModel.insertMany).not.toHaveBeenCalled();
+      expect(result).toHaveLength(0);
     });
   });
 

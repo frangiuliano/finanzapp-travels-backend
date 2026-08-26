@@ -7,9 +7,15 @@ import {
   IsIn,
   IsEnum,
   IsMongoId,
+  IsArray,
+  ArrayMinSize,
+  ArrayUnique,
 } from 'class-validator';
 import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
 import { BoardType } from '../board.schema';
+import { DEFAULT_CATEGORIES } from '../../categories/constants/default-categories';
+
+const DEFAULT_CATEGORY_NAMES = DEFAULT_CATEGORIES.map(({ name }) => name);
 
 export class CreateBoardDto {
   @IsNotEmpty({ message: 'El nombre del tablero es obligatorio' })
@@ -36,6 +42,16 @@ export class CreateBoardDto {
   @IsOptional()
   @IsMongoId({ message: 'El tablero principal no es válido' })
   parentBoardId?: string;
+
+  @IsArray({ message: 'Las categorías deben ser una lista' })
+  @ArrayMinSize(3, { message: 'Seleccioná al menos 3 categorías' })
+  @ArrayUnique({ message: 'Las categorías no pueden repetirse' })
+  @IsString({ each: true, message: 'Cada categoría debe ser texto' })
+  @IsIn(DEFAULT_CATEGORY_NAMES, {
+    each: true,
+    message: 'Una o más categorías no son válidas',
+  })
+  categoryNames?: string[];
 }
 
 /** @deprecated Use CreateBoardDto */
