@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { WealthService } from './wealth.service';
 import {
   HoldingType,
+  InvestmentTransactionType,
   SavingsGoalStatus,
   WealthEventKind,
 } from './wealth.schemas';
@@ -25,7 +26,7 @@ describe('WealthService', () => {
   const eventModel = { create: jest.fn() };
   const instrumentModel = { updateOne: jest.fn() };
   const positionModel = { find: jest.fn() };
-  const transactionModel = { create: jest.fn() };
+  const transactionModel = { create: jest.fn(), find: jest.fn() };
   const service = new WealthService(
     holdingModel as never,
     goalModel as never,
@@ -160,5 +161,97 @@ describe('WealthService', () => {
     expect(projection.progressPercent).toBe(25);
     expect(projection.requiredMonthlyContribution).toBeGreaterThan(0);
     expect(projection.estimatedCompletionDate).not.toBeNull();
+  });
+
+  it('recovers available investment cash for holdings created before cashBalance', async () => {
+    const legacyHolding = {
+      ...holding,
+      type: HoldingType.INVESTMENT,
+      currentBalance: 1_000_000,
+      cashBalance: undefined,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    positionModel.find.mockReturnValue({
+      lean: jest.fn().mockResolvedValue([
+        { quantity: 10, currentPrice: 10_000 },
+        { quantity: 5, currentPrice: 20_000 },
+      ]),
+    });
+
+    const cash = await service['ensureInvestmentCashBalance'](
+      legacyHolding as never,
+    );
+
+    expect(cash).toBe(800_000);
+    expect(legacyHolding.cashBalance).toBe(800_000);
+    expect(legacyHolding.save).toHaveBeenCalled();
+  });
+
+  it('replays purchases to calculate the weighted average cost', async () => {
+    const instrumentId = new Types.ObjectId();
+    transactionModel.find.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            _id: new Types.ObjectId(),
+            instrumentId,
+            type: InvestmentTransactionType.BUY,
+            quantity: 10,
+            unitPrice: 100,
+            fees: 0,
+            occurredAt: new Date('2026-01-01'),
+          },
+          {
+            _id: new Types.ObjectId(),
+            instrumentId,
+            type: InvestmentTransactionType.BUY,
+            quantity: 15,
+            unitPrice: 110,
+            fees: 0,
+            occurredAt: new Date('2026-02-01'),
+          },
+        ]),
+      }),
+    });
+
+    const state = await service['replayInstrumentTransactions'](
+      holdingId,
+      instrumentId.toString(),
+    );
+
+    expect(state).toEqual({ quantity: 25, averageCost: 106 });
+  });
+
+  it('rejects a correction that creates a sale without enough units', async () => {
+    const instrumentId = new Types.ObjectId();
+    transactionModel.find.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            _id: new Types.ObjectId(),
+            instrumentId,
+            type: InvestmentTransactionType.BUY,
+            quantity: 10,
+            unitPrice: 100,
+            occurredAt: new Date('2026-01-01'),
+          },
+          {
+            _id: new Types.ObjectId(),
+            instrumentId,
+            type: InvestmentTransactionType.SELL,
+            quantity: 11,
+            unitPrice: 120,
+            occurredAt: new Date('2026-02-01'),
+          },
+        ]),
+      }),
+    });
+
+    await expect(
+      service['replayInstrumentTransactions'](
+        holdingId,
+        instrumentId.toString(),
+      ),
+    ).rejects.toThrow('venta sin unidades suficientes');
   });
 });

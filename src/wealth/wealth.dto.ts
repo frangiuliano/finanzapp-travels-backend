@@ -82,8 +82,7 @@ export class CreateInstrumentDto {
 export class CreatePositionDto {
   @IsMongoId() instrumentId: string;
   @IsNumber() @Min(0.00000001) quantity: number;
-  @IsNumber() @Min(0) averageCost: number;
-  @IsNumber() @Min(0) currentPrice: number;
+  @IsNumber() @Min(0) unitPrice: number;
 }
 
 export class UpdatePositionPriceDto {
@@ -99,3 +98,5 @@ export class CreateInvestmentTransactionDto {
   @IsOptional() @IsDateString() occurredAt?: string;
   @IsOptional() @IsString() @MaxLength(200) note?: string;
 }
+
+export class UpdateInvestmentTransactionDto extends CreateInvestmentTransactionDto {}

@@ -17,6 +17,7 @@ import {
   CreateInvestmentTransactionDto,
   CreatePositionDto,
   UpdatePositionPriceDto,
+  UpdateInvestmentTransactionDto,
 } from './wealth.dto';
 import {
   GoalAllocation,
@@ -140,10 +141,17 @@ export class WealthService implements OnModuleInit {
         contributionEvents as unknown as Array<Record<string, unknown>>,
       ),
     );
-    const investmentPositions = await this.positionModel
-      .find({ boardId: boardObjectId, isOpen: true })
-      .populate('instrumentId')
-      .lean();
+    const [investmentPositions, investmentTransactions] = await Promise.all([
+      this.positionModel
+        .find({ boardId: boardObjectId, isOpen: true })
+        .populate('instrumentId')
+        .lean(),
+      this.transactionModel
+        .find({ boardId: boardObjectId, isVoided: { $ne: true } })
+        .sort({ occurredAt: -1 })
+        .limit(100)
+        .lean(),
+    ]);
 
     return {
       holdings: holdings.map((holding) => ({
@@ -156,6 +164,7 @@ export class WealthService implements OnModuleInit {
       ),
       recentEvents,
       investmentPositions,
+      investmentTransactions,
     };
   }
 
@@ -423,7 +432,7 @@ export class WealthService implements OnModuleInit {
     return this.getOverview(userId, boardId);
   }
 
-  listInstruments(userId: string, search = '') {
+  listInstruments(userId: string, search = '', currency?: string) {
     const ownerId = new Types.ObjectId(userId);
     const access = [{ isSystem: true }, { createdBy: ownerId }];
     const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -432,6 +441,7 @@ export class WealthService implements OnModuleInit {
         isActive: true,
         $and: [
           { $or: access },
+          ...(currency ? [{ currency: currency.toUpperCase() }] : []),
           ...(escaped
             ? [
                 {
@@ -445,7 +455,7 @@ export class WealthService implements OnModuleInit {
         ],
       })
       .sort({ symbol: 1 })
-      .limit(50)
+      .limit(100)
       .lean();
   }
 
@@ -473,7 +483,10 @@ export class WealthService implements OnModuleInit {
   ) {
     await this.prepareBoard(boardId, userId);
     const holding = await this.requireInvestmentHolding(holdingId, boardId);
-    const instrument = await this.instrumentModel.findById(dto.instrumentId);
+    const instrument = await this.instrumentModel.findOne({
+      _id: new Types.ObjectId(dto.instrumentId),
+      $or: [{ isSystem: true }, { createdBy: new Types.ObjectId(userId) }],
+    });
     if (!instrument) throw new NotFoundException('Instrumento no encontrado');
     if (instrument.currency !== holding.currency) {
       throw new BadRequestException(
@@ -487,18 +500,42 @@ export class WealthService implements OnModuleInit {
     if (existing?.isOpen)
       throw new BadRequestException('La posición ya existe');
     const position = existing
-      ? Object.assign(existing, { ...dto, isOpen: true })
+      ? Object.assign(existing, {
+          quantity: dto.quantity,
+          averageCost: dto.unitPrice,
+          currentPrice: dto.unitPrice,
+          isOpen: true,
+        })
       : new this.positionModel({
           userId: holding.userId,
           boardId: holding.boardId,
           holdingId: holding._id,
           instrumentId: instrument._id,
           quantity: dto.quantity,
-          averageCost: dto.averageCost,
-          currentPrice: dto.currentPrice,
+          averageCost: dto.unitPrice,
+          currentPrice: dto.unitPrice,
           isOpen: true,
         });
+    const total = dto.quantity * dto.unitPrice;
+    const cash = await this.ensureInvestmentCashBalance(holding);
+    if (cash < total) {
+      throw new BadRequestException(
+        `El efectivo disponible no alcanza. Disponible: ${cash} ${holding.currency}`,
+      );
+    }
+    holding.cashBalance = cash - total;
     await position.save();
+    await this.transactionModel.create({
+      userId: holding.userId,
+      boardId: holding.boardId,
+      holdingId: holding._id,
+      instrumentId: instrument._id,
+      type: InvestmentTransactionType.BUY,
+      quantity: dto.quantity,
+      unitPrice: dto.unitPrice,
+      fees: 0,
+      occurredAt: new Date(),
+    });
     await this.recalculateInvestmentHolding(holding);
     return position;
   }
@@ -540,11 +577,13 @@ export class WealthService implements OnModuleInit {
     });
     if (!position) throw new NotFoundException('Posición no encontrada');
     const fees = dto.fees ?? 0;
-    const cash = holding.cashBalance ?? 0;
+    const cash = await this.ensureInvestmentCashBalance(holding);
     if (dto.type === InvestmentTransactionType.BUY) {
       const total = dto.quantity * dto.unitPrice + fees;
       if (cash < total)
-        throw new BadRequestException('El efectivo disponible no alcanza');
+        throw new BadRequestException(
+          `El efectivo disponible no alcanza. Disponible: ${cash} ${holding.currency}`,
+        );
       const previousCost = position.quantity * position.averageCost;
       position.quantity += dto.quantity;
       position.averageCost =
@@ -567,7 +606,6 @@ export class WealthService implements OnModuleInit {
       position.isOpen = position.quantity > 0;
       holding.cashBalance = resultingCash;
     }
-    position.currentPrice = dto.unitPrice;
     await position.save();
     await this.transactionModel.create({
       ...dto,
@@ -580,6 +618,227 @@ export class WealthService implements OnModuleInit {
     });
     await this.recalculateInvestmentHolding(holding);
     return this.getOverview(userId, boardId);
+  }
+
+  async updateTransaction(
+    transactionId: string,
+    dto: UpdateInvestmentTransactionDto,
+    userId: string,
+    boardId: string,
+  ) {
+    await this.prepareBoard(boardId, userId);
+    const transaction = await this.transactionModel.findOne({
+      _id: new Types.ObjectId(transactionId),
+      boardId: new Types.ObjectId(boardId),
+      isVoided: { $ne: true },
+    });
+    if (!transaction) throw new NotFoundException('Operación no encontrada');
+    const holding = await this.requireInvestmentHolding(
+      transaction.holdingId.toString(),
+      boardId,
+    );
+    const instrument = await this.instrumentModel.findOne({
+      _id: new Types.ObjectId(dto.instrumentId),
+      $or: [{ isSystem: true }, { createdBy: new Types.ObjectId(userId) }],
+    });
+    if (!instrument) throw new NotFoundException('Instrumento no encontrado');
+    if (instrument.currency !== holding.currency) {
+      throw new BadRequestException(
+        'El instrumento y la cuenta deben usar la misma moneda',
+      );
+    }
+    const oldInstrumentId = transaction.instrumentId.toString();
+    const oldCashEffect = this.transactionCashEffect(transaction);
+    const replacement = {
+      _id: transaction._id,
+      instrumentId: instrument._id,
+      type: dto.type,
+      quantity: dto.quantity,
+      unitPrice: dto.unitPrice,
+      fees: dto.fees ?? 0,
+      occurredAt: dto.occurredAt
+        ? new Date(dto.occurredAt)
+        : transaction.occurredAt,
+    };
+    const newCash =
+      (await this.ensureInvestmentCashBalance(holding)) -
+      oldCashEffect +
+      this.transactionCashEffect(replacement);
+    if (newCash < 0) {
+      throw new BadRequestException(
+        'La corrección dejaría el efectivo disponible en negativo',
+      );
+    }
+    const affectedIds = [...new Set([oldInstrumentId, dto.instrumentId])];
+    const states = await Promise.all(
+      affectedIds.map((id) =>
+        this.replayInstrumentTransactions(holding._id, id, replacement),
+      ),
+    );
+    transaction.correctionHistory ??= [];
+    transaction.correctionHistory.push({
+      action: 'updated',
+      correctedAt: new Date(),
+      instrumentId: transaction.instrumentId,
+      type: transaction.type,
+      quantity: transaction.quantity,
+      unitPrice: transaction.unitPrice,
+      fees: transaction.fees,
+      occurredAt: transaction.occurredAt,
+    });
+    Object.assign(transaction, replacement, { note: dto.note?.trim() });
+    holding.cashBalance = newCash;
+    await transaction.save();
+    await this.applyReplayedPositions(holding, affectedIds, states);
+    return this.getOverview(userId, boardId);
+  }
+
+  async deleteTransaction(
+    transactionId: string,
+    userId: string,
+    boardId: string,
+  ) {
+    await this.prepareBoard(boardId, userId);
+    const transaction = await this.transactionModel.findOne({
+      _id: new Types.ObjectId(transactionId),
+      boardId: new Types.ObjectId(boardId),
+      isVoided: { $ne: true },
+    });
+    if (!transaction) throw new NotFoundException('Operación no encontrada');
+    const holding = await this.requireInvestmentHolding(
+      transaction.holdingId.toString(),
+      boardId,
+    );
+    const instrumentId = transaction.instrumentId.toString();
+    const state = await this.replayInstrumentTransactions(
+      holding._id,
+      instrumentId,
+      undefined,
+      transaction._id.toString(),
+    );
+    const newCash =
+      (await this.ensureInvestmentCashBalance(holding)) -
+      this.transactionCashEffect(transaction);
+    if (newCash < 0) {
+      throw new BadRequestException(
+        'No se puede eliminar: el efectivo disponible quedaría en negativo',
+      );
+    }
+    transaction.correctionHistory ??= [];
+    transaction.correctionHistory.push({
+      action: 'deleted',
+      correctedAt: new Date(),
+      instrumentId: transaction.instrumentId,
+      type: transaction.type,
+      quantity: transaction.quantity,
+      unitPrice: transaction.unitPrice,
+      fees: transaction.fees,
+      occurredAt: transaction.occurredAt,
+    });
+    transaction.isVoided = true;
+    holding.cashBalance = newCash;
+    await transaction.save();
+    await this.applyReplayedPositions(holding, [instrumentId], [state]);
+  }
+
+  private transactionCashEffect(transaction: {
+    type: InvestmentTransactionType;
+    quantity: number;
+    unitPrice: number;
+    fees?: number;
+  }) {
+    const gross = transaction.quantity * transaction.unitPrice;
+    return transaction.type === InvestmentTransactionType.BUY
+      ? -gross - (transaction.fees ?? 0)
+      : gross - (transaction.fees ?? 0);
+  }
+
+  private async replayInstrumentTransactions(
+    holdingId: Types.ObjectId,
+    instrumentId: string,
+    replacement?: {
+      _id: Types.ObjectId;
+      instrumentId: Types.ObjectId;
+      type: InvestmentTransactionType;
+      quantity: number;
+      unitPrice: number;
+      fees: number;
+      occurredAt: Date;
+    },
+    excludedId?: string,
+  ) {
+    const transactions = await this.transactionModel
+      .find({
+        holdingId,
+        isVoided: { $ne: true },
+        $or: [
+          { instrumentId: new Types.ObjectId(instrumentId) },
+          ...(replacement?.instrumentId.toString() === instrumentId
+            ? [{ _id: replacement._id }]
+            : []),
+        ],
+      })
+      .sort({ occurredAt: 1, createdAt: 1 })
+      .lean();
+    const replay = transactions
+      .filter((item) => item._id.toString() !== excludedId)
+      .map((item) =>
+        replacement && item._id.toString() === replacement._id.toString()
+          ? replacement
+          : item,
+      )
+      .filter((item) => item.instrumentId.toString() === instrumentId)
+      .sort(
+        (a, b) =>
+          new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime(),
+      );
+    let quantity = 0;
+    let cost = 0;
+    for (const item of replay) {
+      if (item.type === InvestmentTransactionType.BUY) {
+        quantity += item.quantity;
+        cost += item.quantity * item.unitPrice + (item.fees ?? 0);
+      } else {
+        if (item.quantity > quantity) {
+          throw new BadRequestException(
+            'La corrección dejaría una venta sin unidades suficientes en esa fecha',
+          );
+        }
+        const averageCost = quantity ? cost / quantity : 0;
+        quantity -= item.quantity;
+        cost -= item.quantity * averageCost;
+      }
+    }
+    return { quantity, averageCost: quantity ? cost / quantity : 0 };
+  }
+
+  private async applyReplayedPositions(
+    holding: HoldingDocument,
+    instrumentIds: string[],
+    states: Array<{ quantity: number; averageCost: number }>,
+  ) {
+    for (const [index, instrumentId] of instrumentIds.entries()) {
+      let position = await this.positionModel.findOne({
+        holdingId: holding._id,
+        instrumentId: new Types.ObjectId(instrumentId),
+      });
+      const state = states[index];
+      if (!position && state.quantity > 0) {
+        position = new this.positionModel({
+          userId: holding.userId,
+          boardId: holding.boardId,
+          holdingId: holding._id,
+          instrumentId: new Types.ObjectId(instrumentId),
+          currentPrice: state.averageCost,
+        });
+      }
+      if (!position) continue;
+      position.quantity = state.quantity;
+      position.averageCost = state.averageCost;
+      position.isOpen = state.quantity > 0;
+      await position.save();
+    }
+    await this.recalculateInvestmentHolding(holding);
   }
 
   private async requireInvestmentHolding(id: string, boardId: string) {
@@ -608,6 +867,22 @@ export class WealthService implements OnModuleInit {
       );
     }
     await holding.save();
+  }
+
+  private async ensureInvestmentCashBalance(holding: HoldingDocument) {
+    if (holding.cashBalance !== undefined && holding.cashBalance !== null) {
+      return holding.cashBalance;
+    }
+    const positions = await this.positionModel
+      .find({ holdingId: holding._id, isOpen: true })
+      .lean();
+    const investedValue = positions.reduce(
+      (sum, position) => sum + position.quantity * position.currentPrice,
+      0,
+    );
+    holding.cashBalance = Math.max(0, holding.currentBalance - investedValue);
+    await holding.save();
+    return holding.cashBalance;
   }
 
   private async prepareBoard(boardId: string, userId: string) {

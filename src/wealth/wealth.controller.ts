@@ -26,6 +26,7 @@ import {
   CreateInvestmentTransactionDto,
   CreatePositionDto,
   UpdatePositionPriceDto,
+  UpdateInvestmentTransactionDto,
 } from './wealth.dto';
 import { WealthService } from './wealth.service';
 
@@ -163,11 +164,13 @@ export class WealthController {
   async listInstruments(
     @GetUser() user: UserDocument,
     @Query('search') search?: string,
+    @Query('currency') currency?: string,
   ) {
     return {
       instruments: await this.wealthService.listInstruments(
         user._id.toString(),
         search,
+        currency,
       ),
     };
   }
@@ -220,6 +223,35 @@ export class WealthController {
     return this.wealthService.trade(
       holdingId,
       dto,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
+  }
+
+  @Patch('investments/transactions/:transactionId')
+  updateTransaction(
+    @Param('transactionId') transactionId: string,
+    @Body() dto: UpdateInvestmentTransactionDto,
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.updateTransaction(
+      transactionId,
+      dto,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
+  }
+
+  @Delete('investments/transactions/:transactionId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteTransaction(
+    @Param('transactionId') transactionId: string,
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.deleteTransaction(
+      transactionId,
       user._id.toString(),
       this.requireBoardId(boardId),
     );

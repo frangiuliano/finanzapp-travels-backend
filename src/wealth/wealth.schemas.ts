@@ -243,6 +243,9 @@ export class InvestmentTransaction {
   @Prop({ default: 0, min: 0 }) fees: number;
   @Prop({ required: true, default: Date.now }) occurredAt: Date;
   @Prop({ maxlength: 200, trim: true }) note?: string;
+  @Prop({ default: false }) isVoided: boolean;
+  @Prop({ type: [Object], default: [] })
+  correctionHistory: Array<Record<string, unknown>>;
 }
 export type InvestmentTransactionDocument = InvestmentTransaction & Document;
 export const InvestmentTransactionSchema = SchemaFactory.createForClass(
