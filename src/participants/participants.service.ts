@@ -65,7 +65,7 @@ export class ParticipantsService {
 
     if (!ownerParticipant) {
       throw new ForbiddenException(
-        'Solo el propietario del viaje puede realizar esta acción',
+        'Solo el propietario del tablero puede realizar esta acción',
       );
     }
 
@@ -79,7 +79,7 @@ export class ParticipantsService {
     });
 
     if (!participant) {
-      throw new ForbiddenException('No tienes acceso a este viaje');
+      throw new ForbiddenException('No tienes acceso a este tablero');
     }
   }
 
@@ -108,7 +108,7 @@ export class ParticipantsService {
 
       if (existingParticipant) {
         throw new BadRequestException(
-          'Este usuario ya es participante del viaje',
+          'Este usuario ya es participante del tablero',
         );
       }
     }
@@ -162,22 +162,23 @@ export class ParticipantsService {
     }
 
     const inviter = await this.userModel.findById(requestingUserId);
-    const trip = await this.boardModel.findById(tripId);
+    const board = await this.boardModel.findById(tripId);
 
-    if (!trip) {
-      throw new NotFoundException('Viaje no encontrado');
+    if (!board) {
+      throw new NotFoundException('Tablero no encontrado');
     }
 
-    await this.notificationsService.sendTripInvitationEmail(
+    await this.notificationsService.sendBoardInvitationEmail(
       normalizedEmail,
       `${inviter?.firstName || ''} ${inviter?.lastName || ''}`.trim() ||
         'Un usuario',
-      trip.name,
+      board.name,
+      board.type,
       token,
     );
 
     this.logger.log(
-      `Invitación enviada a ${normalizedEmail} para el viaje ${trip.name}`,
+      `Invitación enviada a ${normalizedEmail} para el tablero ${board.name}`,
     );
 
     return invitation;
@@ -233,7 +234,7 @@ export class ParticipantsService {
 
     const trip = await this.boardModel
       .findById(invitation.tripId)
-      .select('name description')
+      .select('name description type')
       .lean();
 
     const inviter = await this.userModel
@@ -245,7 +246,12 @@ export class ParticipantsService {
 
     return {
       invitation,
-      trip: trip as { _id: Types.ObjectId; name: string; description?: string },
+      trip: trip as {
+        _id: Types.ObjectId;
+        name: string;
+        description?: string;
+        type: Board['type'];
+      },
       inviter: inviter as { firstName: string; lastName: string },
       userExists: !!userExists,
       userEmail: invitation.email,
@@ -318,7 +324,7 @@ export class ParticipantsService {
       );
 
       this.logger.log(
-        `Guest convertido en participant: ${guest.guestName || user.email} se unió al viaje ${invitation.tripId.toString()}`,
+        `Guest convertido en participant: ${guest.guestName || user.email} se unió al tablero ${invitation.tripId.toString()}`,
       );
 
       const participantWithUser = await this.participantModel
@@ -328,7 +334,7 @@ export class ParticipantsService {
 
       return {
         success: true,
-        message: '¡Te has unido al viaje exitosamente!',
+        message: '¡Te has unido al tablero exitosamente!',
         participant: participantWithUser as Participant,
       };
     }
@@ -346,7 +352,7 @@ export class ParticipantsService {
 
       return {
         success: true,
-        message: 'Ya eres participante de este viaje',
+        message: 'Ya eres participante de este tablero',
         participant: existingParticipant,
       };
     }
@@ -363,7 +369,7 @@ export class ParticipantsService {
     );
 
     this.logger.log(
-      `Invitación aceptada: ${user.email} se unió al viaje ${invitation.tripId.toString()}`,
+      `Invitación aceptada: ${user.email} se unió al tablero ${invitation.tripId.toString()}`,
     );
 
     const participantWithUser = await this.participantModel
@@ -373,7 +379,7 @@ export class ParticipantsService {
 
     return {
       success: true,
-      message: '¡Te has unido al viaje exitosamente!',
+      message: '¡Te has unido al tablero exitosamente!',
       participant: participantWithUser as Participant,
     };
   }
@@ -458,7 +464,7 @@ export class ParticipantsService {
       participantToRemove.userId.toString() === requestingUserId
     ) {
       throw new BadRequestException(
-        'No puedes eliminarte a ti mismo del viaje',
+        'No puedes eliminarte a ti mismo del tablero',
       );
     }
 
@@ -523,7 +529,7 @@ export class ParticipantsService {
 
       if (existingGuest) {
         throw new BadRequestException(
-          'Ya existe un invitado con este email en este viaje',
+          'Ya existe un invitado con este email en este tablero',
         );
       }
 

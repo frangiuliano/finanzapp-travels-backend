@@ -2,7 +2,7 @@
   <head>
     <meta charset='utf-8' />
     <meta name='viewport' content='width=device-width, initial-scale=1.0' />
-    <title>Te han invitado a un viaje - FinanzApp</title>
+    <title>Te invitaron a un {{boardKind}} - FinanzApp</title>
     <style>
       body {
         font-family: Arial, sans-serif;
@@ -23,7 +23,7 @@
         color: #2c3e50;
         margin-top: 0;
       }
-      .trip-card {
+      .board-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         padding: 25px;
@@ -31,11 +31,11 @@
         margin: 20px 0;
         text-align: center;
       }
-      .trip-card h2 {
+      .board-card h2 {
         margin: 0 0 10px 0;
         font-size: 24px;
       }
-      .trip-card p {
+      .board-card p {
         margin: 0;
         opacity: 0.9;
       }
@@ -82,19 +82,19 @@
   </head>
   <body>
     <div class='container'>
-      <div class='emoji'>✈️</div>
-      <h1>¡Te han invitado a un viaje!</h1>
+      <div class='emoji'>{{#if isTravel}}✈️{{else}}💳{{/if}}</div>
+      <h1>¡Te invitaron a un {{boardKind}}!</h1>
 
       <p><strong>{{inviterName}}</strong>
-        te ha invitado a unirte al siguiente viaje:</p>
+        te invitó a participar del siguiente {{boardKind}}:</p>
 
-      <div class='trip-card'>
-        <h2>{{tripName}}</h2>
-        <p>Gestiona gastos compartidos fácilmente</p>
+      <div class='board-card'>
+        <h2>{{boardName}}</h2>
+        <p>Gestioná gastos compartidos fácilmente</p>
       </div>
 
-      <p>Únete al viaje para poder registrar y compartir gastos con el grupo,
-        ver estadísticas y mantener todo organizado.</p>
+      <p>Unite al tablero para registrar y compartir gastos, ver estadísticas
+        y mantener todo organizado.</p>
 
       <div style='text-align: center;'>
         <a href='{{invitationUrl}}' class='button'>Aceptar invitación</a>
@@ -108,7 +108,7 @@
       <p>Si no esperabas esta invitación o no conoces a quien te la envió,
         puedes ignorar este mensaje.</p>
 
-      <p>¡Nos vemos en el viaje! 🌍</p>
+      <p>¡Nos vemos en FinanzApp!</p>
 
       <p>Saludos,<br />El equipo de FinanzApp</p>
 

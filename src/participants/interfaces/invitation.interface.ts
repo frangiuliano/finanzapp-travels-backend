@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { Invitation, Participant } from '../schemas';
+import { BoardType } from '../../trips/board.schema';
 
 export interface InvitationInfo {
   invitation: Invitation;
@@ -7,6 +8,7 @@ export interface InvitationInfo {
     _id: Types.ObjectId;
     name: string;
     description?: string;
+    type: BoardType;
   };
   inviter: {
     firstName: string;

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MailerService } from '@nestjs-modules/mailer';
 import { ConfigService } from '@nestjs/config';
+import { BoardType } from '../trips/board.schema';
 
 @Injectable()
 export class NotificationsService {
@@ -101,14 +102,15 @@ export class NotificationsService {
     }
   }
 
-  async sendTripInvitationEmail(
+  async sendBoardInvitationEmail(
     email: string,
     inviterName: string,
-    tripName: string,
+    boardName: string,
+    boardType: BoardType,
     token: string,
   ): Promise<void> {
     try {
-      const invitationUrl = `${this.frontendUrl}/trips/invitation/${token}`;
+      const invitationUrl = `${this.frontendUrl}/boards/invitation/${token}`;
       const currentYear = new Date().getFullYear();
 
       // Calcular fecha de expiración (7 días desde ahora)
@@ -124,13 +126,18 @@ export class NotificationsService {
         },
       );
 
+      const isTravel = boardType === BoardType.TRAVEL;
+      const boardKind = isTravel ? 'viaje' : 'tablero cotidiano';
+
       await this.mailerService.sendMail({
         to: email,
-        subject: `${inviterName} te ha invitado a un viaje - FinanzApp`,
+        subject: `${inviterName} te invitó a un ${boardKind} - FinanzApp`,
         template: 'trip-invitation',
         context: {
           inviterName,
-          tripName,
+          boardName,
+          boardKind,
+          isTravel,
           invitationUrl,
           expirationDate: formattedExpirationDate,
           currentYear,
@@ -138,7 +145,7 @@ export class NotificationsService {
       });
 
       this.logger.log(
-        `Email de invitación a viaje enviado a ${email} para el viaje "${tripName}"`,
+        `Email de invitación a ${boardKind} enviado a ${email} para "${boardName}"`,
       );
     } catch (error) {
       this.logger.error(
