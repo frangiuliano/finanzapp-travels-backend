@@ -185,6 +185,16 @@ export class FinancialInstrument {
   currency: string;
   @Prop({ trim: true, maxlength: 50 })
   exchange?: string;
+  @Prop({ trim: true, maxlength: 30 })
+  micCode?: string;
+  @Prop({ trim: true, maxlength: 30 })
+  provider?: string;
+  @Prop({ trim: true, maxlength: 80 })
+  providerSymbol?: string;
+  @Prop({ min: 0 })
+  lastPrice?: number;
+  @Prop()
+  lastPriceAt?: Date;
   @Prop({ default: true })
   isSystem: boolean;
   @Prop({ default: true })

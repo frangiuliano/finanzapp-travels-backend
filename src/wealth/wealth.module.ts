@@ -21,6 +21,7 @@ import {
   InvestmentTransaction,
   InvestmentTransactionSchema,
 } from './wealth.schemas';
+import { MarketDataService } from './market-data.service';
 
 @Module({
   imports: [
@@ -41,6 +42,6 @@ import {
     ]),
   ],
   controllers: [WealthController],
-  providers: [WealthService],
+  providers: [WealthService, MarketDataService],
 })
 export class WealthModule {}

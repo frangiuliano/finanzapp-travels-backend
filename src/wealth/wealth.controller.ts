@@ -213,6 +213,19 @@ export class WealthController {
     );
   }
 
+  @Post('investments/positions/:positionId/refresh-price')
+  refreshPositionPrice(
+    @Param('positionId') positionId: string,
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.refreshPositionPrice(
+      positionId,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
+  }
+
   @Post('investments/:holdingId/transactions')
   trade(
     @Param('holdingId') holdingId: string,

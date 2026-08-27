@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
   OnModuleInit,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -43,6 +44,7 @@ import { DEFAULT_INSTRUMENTS } from './default-instruments';
 import { ParticipantsService } from '../participants/participants.service';
 import { Board, BoardDocument } from '../trips/board.schema';
 import { User, UserDocument } from '../users/user.schema';
+import { MarketDataService } from './market-data.service';
 
 type GoalWithProgress = Record<string, unknown> & {
   allocatedAmount: number;
@@ -74,6 +76,7 @@ export class WealthService implements OnModuleInit {
     @InjectModel(Board.name) private boardModel: Model<BoardDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private participantsService: ParticipantsService,
+    private marketDataService: MarketDataService,
   ) {}
 
   async onModuleInit() {
@@ -432,10 +435,37 @@ export class WealthService implements OnModuleInit {
     return this.getOverview(userId, boardId);
   }
 
-  listInstruments(userId: string, search = '', currency?: string) {
+  async listInstruments(userId: string, search = '', currency?: string) {
     const ownerId = new Types.ObjectId(userId);
     const access = [{ isSystem: true }, { createdBy: ownerId }];
     const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const external = await this.marketDataService.search(search, currency);
+    if (external.length) {
+      await this.instrumentModel.bulkWrite(
+        external.map((instrument) => ({
+          updateOne: {
+            filter: {
+              symbol: instrument.symbol,
+              exchange: instrument.exchange,
+            },
+            update: {
+              $set: {
+                name: instrument.name,
+                type: instrument.type,
+                currency: instrument.currency,
+                micCode: instrument.micCode,
+                provider: instrument.provider,
+                providerSymbol: instrument.providerSymbol,
+                isActive: true,
+              },
+              $setOnInsert: { isSystem: true },
+            },
+            upsert: true,
+          },
+        })),
+        { ordered: false },
+      );
+    }
     return this.instrumentModel
       .find({
         isActive: true,
@@ -457,6 +487,51 @@ export class WealthService implements OnModuleInit {
       .sort({ symbol: 1 })
       .limit(100)
       .lean();
+  }
+
+  async refreshPositionPrice(
+    positionId: string,
+    userId: string,
+    boardId: string,
+  ) {
+    await this.prepareBoard(boardId, userId);
+    const position = await this.positionModel.findOne({
+      _id: new Types.ObjectId(positionId),
+      boardId: new Types.ObjectId(boardId),
+      isOpen: true,
+    });
+    if (!position) throw new NotFoundException('Posición no encontrada');
+    const instrument = await this.instrumentModel.findById(
+      position.instrumentId,
+    );
+    if (!instrument?.providerSymbol || instrument.provider !== 'twelve_data') {
+      throw new BadRequestException(
+        'Este instrumento no tiene cotización automática disponible',
+      );
+    }
+    try {
+      const price = await this.marketDataService.getLatestPrice(
+        instrument.providerSymbol,
+        instrument.exchange,
+      );
+      const capturedAt = new Date();
+      position.currentPrice = price;
+      instrument.lastPrice = price;
+      instrument.lastPriceAt = capturedAt;
+      await Promise.all([position.save(), instrument.save()]);
+      const holding = await this.requireInvestmentHolding(
+        position.holdingId.toString(),
+        boardId,
+      );
+      await this.recalculateInvestmentHolding(holding);
+      return { currentPrice: price, capturedAt };
+    } catch (error) {
+      throw new ServiceUnavailableException(
+        error instanceof Error
+          ? `No se pudo obtener la cotización: ${error.message}`
+          : 'No se pudo obtener la cotización',
+      );
+    }
   }
 
   async createInstrument(dto: CreateInstrumentDto, userId: string) {

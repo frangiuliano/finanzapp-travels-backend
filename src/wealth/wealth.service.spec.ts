@@ -38,6 +38,7 @@ describe('WealthService', () => {
     {} as never,
     {} as never,
     {} as never,
+    { search: jest.fn().mockResolvedValue([]) } as never,
   );
 
   const holding = {
