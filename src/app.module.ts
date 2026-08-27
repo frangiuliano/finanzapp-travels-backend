@@ -23,6 +23,7 @@ import { InstallmentPlansModule } from './installment-plans/installment-plans.mo
 import { ForecastModule } from './forecast/forecast.module';
 import { InAppNotificationsModule } from './in-app-notifications/in-app-notifications.module';
 import { BillingPeriodsModule } from './billing-periods/billing-periods.module';
+import { WealthModule } from './wealth/wealth.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { BillingPeriodsModule } from './billing-periods/billing-periods.module';
     ForecastModule,
     InAppNotificationsModule,
     BillingPeriodsModule,
+    WealthModule,
   ],
   controllers: [AppController],
   providers: [
