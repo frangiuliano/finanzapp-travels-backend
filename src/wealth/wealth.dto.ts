@@ -15,6 +15,8 @@ import {
 import { SUPPORTED_CURRENCIES } from '../common/constants/currencies';
 import {
   HoldingType,
+  InstrumentType,
+  InvestmentTransactionType,
   SavingsGoalStatus,
   WealthEventKind,
 } from './wealth.schemas';
@@ -67,4 +69,33 @@ export class CreateGoalContributionDto {
   @IsNumber() @Min(0.01) amount: number;
   @IsOptional() @IsString() @MaxLength(200) note?: string;
   @IsOptional() @IsDateString() occurredAt?: string;
+}
+
+export class CreateInstrumentDto {
+  @IsString() @MinLength(1) @MaxLength(30) symbol: string;
+  @IsString() @MinLength(2) @MaxLength(120) name: string;
+  @IsEnum(InstrumentType) type: InstrumentType;
+  @IsIn(SUPPORTED_CURRENCIES) currency: string;
+  @IsOptional() @IsString() @MaxLength(50) exchange?: string;
+}
+
+export class CreatePositionDto {
+  @IsMongoId() instrumentId: string;
+  @IsNumber() @Min(0.00000001) quantity: number;
+  @IsNumber() @Min(0) averageCost: number;
+  @IsNumber() @Min(0) currentPrice: number;
+}
+
+export class UpdatePositionPriceDto {
+  @IsNumber() @Min(0) currentPrice: number;
+}
+
+export class CreateInvestmentTransactionDto {
+  @IsMongoId() instrumentId: string;
+  @IsEnum(InvestmentTransactionType) type: InvestmentTransactionType;
+  @IsNumber() @Min(0.00000001) quantity: number;
+  @IsNumber() @Min(0) unitPrice: number;
+  @IsOptional() @IsNumber() @Min(0) fees?: number;
+  @IsOptional() @IsDateString() occurredAt?: string;
+  @IsOptional() @IsString() @MaxLength(200) note?: string;
 }

@@ -22,11 +22,17 @@ describe('WealthService', () => {
     findOneAndUpdate: jest.fn(),
   };
   const eventModel = { create: jest.fn() };
+  const instrumentModel = { updateOne: jest.fn() };
+  const positionModel = { find: jest.fn() };
+  const transactionModel = { create: jest.fn() };
   const service = new WealthService(
     holdingModel as never,
     goalModel as never,
     allocationModel as never,
     eventModel as never,
+    instrumentModel as never,
+    positionModel as never,
+    transactionModel as never,
   );
 
   const holding = {

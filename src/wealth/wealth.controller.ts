@@ -20,8 +20,13 @@ import {
   CreateSavingsGoalDto,
   UpdateHoldingDto,
   UpdateSavingsGoalDto,
+  CreateInstrumentDto,
+  CreateInvestmentTransactionDto,
+  CreatePositionDto,
+  UpdatePositionPriceDto,
 } from './wealth.dto';
 import { WealthService } from './wealth.service';
+import { Query } from '@nestjs/common';
 
 @Controller('wealth')
 @UseGuards(JwtAuthGuard)
@@ -89,5 +94,61 @@ export class WealthController {
     @GetUser() user: UserDocument,
   ) {
     return this.wealthService.contribute(id, dto, user._id.toString());
+  }
+
+  @Get('instruments/catalog')
+  async listInstruments(
+    @GetUser() user: UserDocument,
+    @Query('search') search?: string,
+  ) {
+    return {
+      instruments: await this.wealthService.listInstruments(
+        user._id.toString(),
+        search,
+      ),
+    };
+  }
+
+  @Post('instruments/catalog')
+  createInstrument(
+    @Body() dto: CreateInstrumentDto,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.createInstrument(dto, user._id.toString());
+  }
+
+  @Post('investments/:holdingId/positions')
+  createPosition(
+    @Param('holdingId') holdingId: string,
+    @Body() dto: CreatePositionDto,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.createPosition(
+      holdingId,
+      dto,
+      user._id.toString(),
+    );
+  }
+
+  @Patch('investments/positions/:positionId/price')
+  updatePositionPrice(
+    @Param('positionId') positionId: string,
+    @Body() dto: UpdatePositionPriceDto,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.updatePositionPrice(
+      positionId,
+      dto,
+      user._id.toString(),
+    );
+  }
+
+  @Post('investments/:holdingId/transactions')
+  trade(
+    @Param('holdingId') holdingId: string,
+    @Body() dto: CreateInvestmentTransactionDto,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.trade(holdingId, dto, user._id.toString());
   }
 }

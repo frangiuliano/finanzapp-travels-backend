@@ -32,6 +32,9 @@ export class Holding {
   @Prop({ required: true, default: 0, min: 0 })
   allocatedBalance: number;
 
+  @Prop({ min: 0 })
+  cashBalance?: number;
+
   @Prop({ default: true })
   isActive: boolean;
 }
@@ -147,3 +150,84 @@ export type WealthEventDocument = WealthEvent & Document;
 export const WealthEventSchema = SchemaFactory.createForClass(WealthEvent);
 WealthEventSchema.index({ userId: 1, occurredAt: -1 });
 WealthEventSchema.index({ goalId: 1, occurredAt: -1 });
+
+export enum InstrumentType {
+  STOCK = 'stock',
+  ETF = 'etf',
+  CEDEAR = 'cedear',
+  BOND = 'bond',
+  MUTUAL_FUND = 'mutual_fund',
+  CRYPTO = 'crypto',
+  OTHER = 'other',
+}
+
+@Schema({ timestamps: true, collection: 'financialinstruments' })
+export class FinancialInstrument {
+  @Prop({ required: true, uppercase: true, trim: true, maxlength: 30 })
+  symbol: string;
+  @Prop({ required: true, trim: true, maxlength: 120 })
+  name: string;
+  @Prop({ type: String, enum: InstrumentType, required: true })
+  type: InstrumentType;
+  @Prop({ required: true, uppercase: true, maxlength: 3 })
+  currency: string;
+  @Prop({ trim: true, maxlength: 50 })
+  exchange?: string;
+  @Prop({ default: true })
+  isSystem: boolean;
+  @Prop({ default: true })
+  isActive: boolean;
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  createdBy?: Types.ObjectId;
+}
+export type FinancialInstrumentDocument = FinancialInstrument & Document;
+export const FinancialInstrumentSchema =
+  SchemaFactory.createForClass(FinancialInstrument);
+FinancialInstrumentSchema.index({ symbol: 1, exchange: 1 }, { unique: true });
+
+@Schema({ timestamps: true, collection: 'investmentpositions' })
+export class InvestmentPosition {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  userId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Holding', required: true })
+  holdingId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'FinancialInstrument', required: true })
+  instrumentId: Types.ObjectId;
+  @Prop({ required: true, min: 0 }) quantity: number;
+  @Prop({ required: true, min: 0 }) averageCost: number;
+  @Prop({ required: true, min: 0 }) currentPrice: number;
+  @Prop({ default: true }) isOpen: boolean;
+}
+export type InvestmentPositionDocument = InvestmentPosition & Document;
+export const InvestmentPositionSchema =
+  SchemaFactory.createForClass(InvestmentPosition);
+InvestmentPositionSchema.index(
+  { holdingId: 1, instrumentId: 1 },
+  { unique: true },
+);
+
+export enum InvestmentTransactionType {
+  BUY = 'buy',
+  SELL = 'sell',
+}
+@Schema({ timestamps: true, collection: 'investmenttransactions' })
+export class InvestmentTransaction {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  userId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Holding', required: true })
+  holdingId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'FinancialInstrument', required: true })
+  instrumentId: Types.ObjectId;
+  @Prop({ type: String, enum: InvestmentTransactionType, required: true })
+  type: InvestmentTransactionType;
+  @Prop({ required: true, min: 0.00000001 }) quantity: number;
+  @Prop({ required: true, min: 0 }) unitPrice: number;
+  @Prop({ default: 0, min: 0 }) fees: number;
+  @Prop({ required: true, default: Date.now }) occurredAt: Date;
+  @Prop({ maxlength: 200, trim: true }) note?: string;
+}
+export type InvestmentTransactionDocument = InvestmentTransaction & Document;
+export const InvestmentTransactionSchema = SchemaFactory.createForClass(
+  InvestmentTransaction,
+);
+InvestmentTransactionSchema.index({ holdingId: 1, occurredAt: -1 });

@@ -11,6 +11,12 @@ import {
   SavingsGoalSchema,
   WealthEvent,
   WealthEventSchema,
+  FinancialInstrument,
+  FinancialInstrumentSchema,
+  InvestmentPosition,
+  InvestmentPositionSchema,
+  InvestmentTransaction,
+  InvestmentTransactionSchema,
 } from './wealth.schemas';
 
 @Module({
@@ -20,6 +26,12 @@ import {
       { name: SavingsGoal.name, schema: SavingsGoalSchema },
       { name: GoalAllocation.name, schema: GoalAllocationSchema },
       { name: WealthEvent.name, schema: WealthEventSchema },
+      { name: FinancialInstrument.name, schema: FinancialInstrumentSchema },
+      { name: InvestmentPosition.name, schema: InvestmentPositionSchema },
+      {
+        name: InvestmentTransaction.name,
+        schema: InvestmentTransactionSchema,
+      },
     ]),
   ],
   controllers: [WealthController],

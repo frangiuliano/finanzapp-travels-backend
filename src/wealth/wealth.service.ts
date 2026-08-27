@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -12,19 +13,32 @@ import {
   CreateSavingsGoalDto,
   UpdateHoldingDto,
   UpdateSavingsGoalDto,
+  CreateInstrumentDto,
+  CreateInvestmentTransactionDto,
+  CreatePositionDto,
+  UpdatePositionPriceDto,
 } from './wealth.dto';
 import {
   GoalAllocation,
   GoalAllocationDocument,
   Holding,
   HoldingDocument,
+  HoldingType,
   SavingsGoal,
   SavingsGoalDocument,
   SavingsGoalStatus,
   WealthEvent,
   WealthEventDocument,
   WealthEventKind,
+  FinancialInstrument,
+  FinancialInstrumentDocument,
+  InvestmentPosition,
+  InvestmentPositionDocument,
+  InvestmentTransaction,
+  InvestmentTransactionDocument,
+  InvestmentTransactionType,
 } from './wealth.schemas';
+import { DEFAULT_INSTRUMENTS } from './default-instruments';
 
 type GoalWithProgress = Record<string, unknown> & {
   allocatedAmount: number;
@@ -38,7 +52,7 @@ type GoalWithProgress = Record<string, unknown> & {
 };
 
 @Injectable()
-export class WealthService {
+export class WealthService implements OnModuleInit {
   constructor(
     @InjectModel(Holding.name) private holdingModel: Model<HoldingDocument>,
     @InjectModel(SavingsGoal.name)
@@ -47,7 +61,35 @@ export class WealthService {
     private allocationModel: Model<GoalAllocationDocument>,
     @InjectModel(WealthEvent.name)
     private eventModel: Model<WealthEventDocument>,
+    @InjectModel(FinancialInstrument.name)
+    private instrumentModel: Model<FinancialInstrumentDocument>,
+    @InjectModel(InvestmentPosition.name)
+    private positionModel: Model<InvestmentPositionDocument>,
+    @InjectModel(InvestmentTransaction.name)
+    private transactionModel: Model<InvestmentTransactionDocument>,
   ) {}
+
+  async onModuleInit() {
+    await Promise.all(
+      DEFAULT_INSTRUMENTS.map(([symbol, name, type, currency, exchange]) =>
+        this.instrumentModel.updateOne(
+          { symbol, exchange },
+          {
+            $setOnInsert: {
+              symbol,
+              name,
+              type,
+              currency,
+              exchange,
+              isSystem: true,
+              isActive: true,
+            },
+          },
+          { upsert: true },
+        ),
+      ),
+    );
+  }
 
   async getOverview(userId: string) {
     const ownerId = new Types.ObjectId(userId);
@@ -91,6 +133,10 @@ export class WealthService {
         contributionEvents as unknown as Array<Record<string, unknown>>,
       ),
     );
+    const investmentPositions = await this.positionModel
+      .find({ userId: ownerId, isOpen: true })
+      .populate('instrumentId')
+      .lean();
 
     return {
       holdings: holdings.map((holding) => ({
@@ -102,6 +148,7 @@ export class WealthService {
         holdings as unknown as Array<Record<string, unknown>>,
       ),
       recentEvents,
+      investmentPositions,
     };
   }
 
@@ -113,6 +160,8 @@ export class WealthService {
       institution: dto.institution?.trim() || undefined,
       userId: ownerId,
       allocatedBalance: 0,
+      cashBalance:
+        dto.type === HoldingType.INVESTMENT ? dto.currentBalance : undefined,
       isActive: true,
     }).save();
     await this.eventModel.create({
@@ -142,20 +191,26 @@ export class WealthService {
     userId: string,
   ) {
     const holding = await this.requireHolding(id, userId);
-    if (dto.balance < holding.allocatedBalance) {
+    const previousBalance = holding.currentBalance;
+    if (holding.type === HoldingType.INVESTMENT) {
+      holding.cashBalance = dto.balance;
+      await this.recalculateInvestmentHolding(holding);
+    } else {
+      holding.currentBalance = dto.balance;
+    }
+    if (holding.currentBalance < holding.allocatedBalance) {
       throw new BadRequestException(
         `No podés bajar el saldo por debajo de lo asignado (${holding.allocatedBalance} ${holding.currency})`,
       );
     }
-    const delta = dto.balance - holding.currentBalance;
-    holding.currentBalance = dto.balance;
-    await holding.save();
+    if (holding.type !== HoldingType.INVESTMENT) await holding.save();
+    const delta = holding.currentBalance - previousBalance;
     await this.eventModel.create({
       userId: holding.userId,
       holdingId: holding._id,
       kind: WealthEventKind.BALANCE_ADJUSTMENT,
       amount: delta,
-      balanceAfter: dto.balance,
+      balanceAfter: holding.currentBalance,
       note: dto.note?.trim() || undefined,
       occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : new Date(),
     });
@@ -332,6 +387,185 @@ export class WealthService {
       throw error;
     }
     return this.getOverview(userId);
+  }
+
+  listInstruments(userId: string, search = '') {
+    const ownerId = new Types.ObjectId(userId);
+    const access = [{ isSystem: true }, { createdBy: ownerId }];
+    const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return this.instrumentModel
+      .find({
+        isActive: true,
+        $and: [
+          { $or: access },
+          ...(escaped
+            ? [
+                {
+                  $or: [
+                    { symbol: { $regex: escaped, $options: 'i' } },
+                    { name: { $regex: escaped, $options: 'i' } },
+                  ],
+                },
+              ]
+            : []),
+        ],
+      })
+      .sort({ symbol: 1 })
+      .limit(50)
+      .lean();
+  }
+
+  async createInstrument(dto: CreateInstrumentDto, userId: string) {
+    try {
+      return await new this.instrumentModel({
+        ...dto,
+        symbol: dto.symbol.trim().toUpperCase(),
+        name: dto.name.trim(),
+        exchange: dto.exchange?.trim().toUpperCase() || 'CUSTOM',
+        isSystem: false,
+        isActive: true,
+        createdBy: new Types.ObjectId(userId),
+      }).save();
+    } catch {
+      throw new BadRequestException('Ese instrumento ya existe');
+    }
+  }
+
+  async createPosition(
+    holdingId: string,
+    dto: CreatePositionDto,
+    userId: string,
+  ) {
+    const holding = await this.requireInvestmentHolding(holdingId, userId);
+    const instrument = await this.instrumentModel.findById(dto.instrumentId);
+    if (!instrument) throw new NotFoundException('Instrumento no encontrado');
+    if (instrument.currency !== holding.currency) {
+      throw new BadRequestException(
+        'El instrumento y la cuenta deben usar la misma moneda',
+      );
+    }
+    const existing = await this.positionModel.findOne({
+      holdingId: holding._id,
+      instrumentId: instrument._id,
+    });
+    if (existing?.isOpen)
+      throw new BadRequestException('La posición ya existe');
+    const position = existing
+      ? Object.assign(existing, { ...dto, isOpen: true })
+      : new this.positionModel({
+          userId: holding.userId,
+          holdingId: holding._id,
+          instrumentId: instrument._id,
+          quantity: dto.quantity,
+          averageCost: dto.averageCost,
+          currentPrice: dto.currentPrice,
+          isOpen: true,
+        });
+    await position.save();
+    await this.recalculateInvestmentHolding(holding);
+    return position;
+  }
+
+  async updatePositionPrice(
+    positionId: string,
+    dto: UpdatePositionPriceDto,
+    userId: string,
+  ) {
+    const position = await this.positionModel.findOne({
+      _id: new Types.ObjectId(positionId),
+      userId: new Types.ObjectId(userId),
+    });
+    if (!position) throw new NotFoundException('Posición no encontrada');
+    position.currentPrice = dto.currentPrice;
+    await position.save();
+    const holding = await this.requireInvestmentHolding(
+      position.holdingId.toString(),
+      userId,
+    );
+    await this.recalculateInvestmentHolding(holding);
+    return position;
+  }
+
+  async trade(
+    holdingId: string,
+    dto: CreateInvestmentTransactionDto,
+    userId: string,
+  ) {
+    const holding = await this.requireInvestmentHolding(holdingId, userId);
+    const position = await this.positionModel.findOne({
+      holdingId: holding._id,
+      instrumentId: new Types.ObjectId(dto.instrumentId),
+      isOpen: true,
+    });
+    if (!position) throw new NotFoundException('Posición no encontrada');
+    const fees = dto.fees ?? 0;
+    const cash = holding.cashBalance ?? 0;
+    if (dto.type === InvestmentTransactionType.BUY) {
+      const total = dto.quantity * dto.unitPrice + fees;
+      if (cash < total)
+        throw new BadRequestException('El efectivo disponible no alcanza');
+      const previousCost = position.quantity * position.averageCost;
+      position.quantity += dto.quantity;
+      position.averageCost =
+        (previousCost + dto.quantity * dto.unitPrice + fees) /
+        position.quantity;
+      holding.cashBalance = cash - total;
+    } else {
+      if (dto.quantity > position.quantity) {
+        throw new BadRequestException(
+          'No hay nominales suficientes para vender',
+        );
+      }
+      const resultingCash = cash + dto.quantity * dto.unitPrice - fees;
+      if (resultingCash < 0) {
+        throw new BadRequestException(
+          'Las comisiones superan el efectivo y el importe de la venta',
+        );
+      }
+      position.quantity -= dto.quantity;
+      position.isOpen = position.quantity > 0;
+      holding.cashBalance = resultingCash;
+    }
+    position.currentPrice = dto.unitPrice;
+    await position.save();
+    await this.transactionModel.create({
+      ...dto,
+      userId: holding.userId,
+      holdingId: holding._id,
+      instrumentId: position.instrumentId,
+      fees,
+      occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : new Date(),
+    });
+    await this.recalculateInvestmentHolding(holding);
+    return this.getOverview(userId);
+  }
+
+  private async requireInvestmentHolding(id: string, userId: string) {
+    const holding = await this.requireHolding(id, userId);
+    if (holding.type !== HoldingType.INVESTMENT) {
+      throw new BadRequestException(
+        'La tenencia no es una cuenta de inversión',
+      );
+    }
+    return holding;
+  }
+
+  private async recalculateInvestmentHolding(holding: HoldingDocument) {
+    const positions = await this.positionModel
+      .find({ holdingId: holding._id, isOpen: true })
+      .lean();
+    holding.currentBalance =
+      (holding.cashBalance ?? 0) +
+      positions.reduce(
+        (sum, position) => sum + position.quantity * position.currentPrice,
+        0,
+      );
+    if (holding.currentBalance < holding.allocatedBalance) {
+      throw new BadRequestException(
+        'La valuación queda debajo del dinero asignado',
+      );
+    }
+    await holding.save();
   }
 
   private async requireHolding(id: string, userId: string) {
