@@ -39,6 +39,9 @@ import {
   InvestmentTransactionType,
 } from './wealth.schemas';
 import { DEFAULT_INSTRUMENTS } from './default-instruments';
+import { ParticipantsService } from '../participants/participants.service';
+import { Board, BoardDocument } from '../trips/board.schema';
+import { User, UserDocument } from '../users/user.schema';
 
 type GoalWithProgress = Record<string, unknown> & {
   allocatedAmount: number;
@@ -67,6 +70,9 @@ export class WealthService implements OnModuleInit {
     private positionModel: Model<InvestmentPositionDocument>,
     @InjectModel(InvestmentTransaction.name)
     private transactionModel: Model<InvestmentTransactionDocument>,
+    @InjectModel(Board.name) private boardModel: Model<BoardDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private participantsService: ParticipantsService,
   ) {}
 
   async onModuleInit() {
@@ -91,34 +97,35 @@ export class WealthService implements OnModuleInit {
     );
   }
 
-  async getOverview(userId: string) {
-    const ownerId = new Types.ObjectId(userId);
+  async getOverview(userId: string, boardId: string) {
+    await this.prepareBoard(boardId, userId);
+    const boardObjectId = new Types.ObjectId(boardId);
     const paceSince = new Date();
     paceSince.setMonth(paceSince.getMonth() - 3);
     const [holdings, goals, allocations, recentEvents, contributionEvents] =
       await Promise.all([
         this.holdingModel
-          .find({ userId: ownerId, isActive: true })
+          .find({ boardId: boardObjectId, isActive: true })
           .sort({ createdAt: 1 })
           .lean(),
         this.goalModel
           .find({
-            userId: ownerId,
+            boardId: boardObjectId,
             status: { $ne: SavingsGoalStatus.ARCHIVED },
           })
           .sort({ priority: 1, createdAt: 1 })
           .lean(),
         this.allocationModel
-          .find({ userId: ownerId, amount: { $gt: 0 } })
+          .find({ boardId: boardObjectId, amount: { $gt: 0 } })
           .lean(),
         this.eventModel
-          .find({ userId: ownerId })
+          .find({ boardId: boardObjectId })
           .sort({ occurredAt: -1 })
           .limit(30)
           .lean(),
         this.eventModel
           .find({
-            userId: ownerId,
+            boardId: boardObjectId,
             occurredAt: { $gte: paceSince },
             kind: {
               $in: [WealthEventKind.CONTRIBUTION, WealthEventKind.WITHDRAWAL],
@@ -134,7 +141,7 @@ export class WealthService implements OnModuleInit {
       ),
     );
     const investmentPositions = await this.positionModel
-      .find({ userId: ownerId, isOpen: true })
+      .find({ boardId: boardObjectId, isOpen: true })
       .populate('instrumentId')
       .lean();
 
@@ -152,13 +159,16 @@ export class WealthService implements OnModuleInit {
     };
   }
 
-  async createHolding(dto: CreateHoldingDto, userId: string) {
+  async createHolding(dto: CreateHoldingDto, userId: string, boardId: string) {
+    await this.prepareBoard(boardId, userId);
     const ownerId = new Types.ObjectId(userId);
+    const boardObjectId = new Types.ObjectId(boardId);
     const holding = await new this.holdingModel({
       ...dto,
       name: dto.name.trim(),
       institution: dto.institution?.trim() || undefined,
       userId: ownerId,
+      boardId: boardObjectId,
       allocatedBalance: 0,
       cashBalance:
         dto.type === HoldingType.INVESTMENT ? dto.currentBalance : undefined,
@@ -166,6 +176,7 @@ export class WealthService implements OnModuleInit {
     }).save();
     await this.eventModel.create({
       userId: ownerId,
+      boardId: boardObjectId,
       holdingId: holding._id,
       kind: WealthEventKind.INITIAL_BALANCE,
       amount: dto.currentBalance,
@@ -175,8 +186,14 @@ export class WealthService implements OnModuleInit {
     return holding;
   }
 
-  async updateHolding(id: string, dto: UpdateHoldingDto, userId: string) {
-    const holding = await this.requireHolding(id, userId);
+  async updateHolding(
+    id: string,
+    dto: UpdateHoldingDto,
+    userId: string,
+    boardId: string,
+  ) {
+    await this.prepareBoard(boardId, userId);
+    const holding = await this.requireHolding(id, boardId);
     if (dto.name !== undefined) holding.name = dto.name.trim();
     if (dto.type !== undefined) holding.type = dto.type;
     if (dto.institution !== undefined) {
@@ -189,8 +206,10 @@ export class WealthService implements OnModuleInit {
     id: string,
     dto: AdjustHoldingBalanceDto,
     userId: string,
+    boardId: string,
   ) {
-    const holding = await this.requireHolding(id, userId);
+    await this.prepareBoard(boardId, userId);
+    const holding = await this.requireHolding(id, boardId);
     const previousBalance = holding.currentBalance;
     if (holding.type === HoldingType.INVESTMENT) {
       holding.cashBalance = dto.balance;
@@ -207,6 +226,7 @@ export class WealthService implements OnModuleInit {
     const delta = holding.currentBalance - previousBalance;
     await this.eventModel.create({
       userId: holding.userId,
+      boardId: holding.boardId,
       holdingId: holding._id,
       kind: WealthEventKind.BALANCE_ADJUSTMENT,
       amount: delta,
@@ -217,8 +237,9 @@ export class WealthService implements OnModuleInit {
     return holding;
   }
 
-  async archiveHolding(id: string, userId: string) {
-    const holding = await this.requireHolding(id, userId);
+  async archiveHolding(id: string, userId: string, boardId: string) {
+    await this.prepareBoard(boardId, userId);
+    const holding = await this.requireHolding(id, boardId);
     if (holding.allocatedBalance > 0) {
       throw new BadRequestException(
         'Liberá primero el dinero asignado a objetivos',
@@ -228,18 +249,26 @@ export class WealthService implements OnModuleInit {
     return holding.save();
   }
 
-  async createGoal(dto: CreateSavingsGoalDto, userId: string) {
+  async createGoal(dto: CreateSavingsGoalDto, userId: string, boardId: string) {
+    await this.prepareBoard(boardId, userId);
     return new this.goalModel({
       ...dto,
       userId: new Types.ObjectId(userId),
+      boardId: new Types.ObjectId(boardId),
       name: dto.name.trim(),
       targetDate: dto.targetDate ? new Date(dto.targetDate) : undefined,
       status: SavingsGoalStatus.ACTIVE,
     }).save();
   }
 
-  async updateGoal(id: string, dto: UpdateSavingsGoalDto, userId: string) {
-    const goal = await this.requireGoal(id, userId);
+  async updateGoal(
+    id: string,
+    dto: UpdateSavingsGoalDto,
+    userId: string,
+    boardId: string,
+  ) {
+    await this.prepareBoard(boardId, userId);
+    const goal = await this.requireGoal(id, boardId);
     if (dto.name !== undefined) goal.name = dto.name.trim();
     if (dto.targetAmount !== undefined) goal.targetAmount = dto.targetAmount;
     if (dto.targetDate !== undefined)
@@ -253,8 +282,9 @@ export class WealthService implements OnModuleInit {
     return goal.save();
   }
 
-  async archiveGoal(id: string, userId: string) {
-    const goal = await this.requireGoal(id, userId);
+  async archiveGoal(id: string, userId: string, boardId: string) {
+    await this.prepareBoard(boardId, userId);
+    const goal = await this.requireGoal(id, boardId);
     const allocations = await this.allocationModel.find({
       goalId: goal._id,
       amount: { $gt: 0 },
@@ -272,10 +302,13 @@ export class WealthService implements OnModuleInit {
     goalId: string,
     dto: CreateGoalContributionDto,
     userId: string,
+    boardId: string,
   ) {
+    await this.prepareBoard(boardId, userId);
+    const boardObjectId = new Types.ObjectId(boardId);
     const [goal, holding] = await Promise.all([
-      this.requireGoal(goalId, userId),
-      this.requireHolding(dto.holdingId, userId),
+      this.requireGoal(goalId, boardId),
+      this.requireHolding(dto.holdingId, boardId),
     ]);
     if (goal.status === SavingsGoalStatus.ARCHIVED) {
       throw new BadRequestException('El objetivo está archivado');
@@ -295,7 +328,7 @@ export class WealthService implements OnModuleInit {
       const reservedHolding = await this.holdingModel.findOneAndUpdate(
         {
           _id: holding._id,
-          userId: ownerId,
+          boardId: boardObjectId,
           isActive: true,
           $expr: {
             $gte: [
@@ -317,7 +350,7 @@ export class WealthService implements OnModuleInit {
           { goalId: goal._id, holdingId: holding._id },
           {
             $inc: { amount: dto.amount },
-            $set: { userId: ownerId },
+            $set: { userId: ownerId, boardId: boardObjectId },
             $setOnInsert: { goalId: goal._id, holdingId: holding._id },
           },
           { upsert: true, new: true },
@@ -347,7 +380,7 @@ export class WealthService implements OnModuleInit {
       const releasedHolding = await this.holdingModel.findOneAndUpdate(
         {
           _id: holding._id,
-          userId: ownerId,
+          boardId: boardObjectId,
           allocatedBalance: { $gte: dto.amount },
         },
         { $inc: { allocatedBalance: -dto.amount } },
@@ -365,6 +398,7 @@ export class WealthService implements OnModuleInit {
     try {
       await this.eventModel.create({
         userId: ownerId,
+        boardId: boardObjectId,
         holdingId: holding._id,
         goalId: goal._id,
         kind: dto.kind,
@@ -386,7 +420,7 @@ export class WealthService implements OnModuleInit {
       ]);
       throw error;
     }
-    return this.getOverview(userId);
+    return this.getOverview(userId, boardId);
   }
 
   listInstruments(userId: string, search = '') {
@@ -435,8 +469,10 @@ export class WealthService implements OnModuleInit {
     holdingId: string,
     dto: CreatePositionDto,
     userId: string,
+    boardId: string,
   ) {
-    const holding = await this.requireInvestmentHolding(holdingId, userId);
+    await this.prepareBoard(boardId, userId);
+    const holding = await this.requireInvestmentHolding(holdingId, boardId);
     const instrument = await this.instrumentModel.findById(dto.instrumentId);
     if (!instrument) throw new NotFoundException('Instrumento no encontrado');
     if (instrument.currency !== holding.currency) {
@@ -454,6 +490,7 @@ export class WealthService implements OnModuleInit {
       ? Object.assign(existing, { ...dto, isOpen: true })
       : new this.positionModel({
           userId: holding.userId,
+          boardId: holding.boardId,
           holdingId: holding._id,
           instrumentId: instrument._id,
           quantity: dto.quantity,
@@ -470,17 +507,19 @@ export class WealthService implements OnModuleInit {
     positionId: string,
     dto: UpdatePositionPriceDto,
     userId: string,
+    boardId: string,
   ) {
+    await this.prepareBoard(boardId, userId);
     const position = await this.positionModel.findOne({
       _id: new Types.ObjectId(positionId),
-      userId: new Types.ObjectId(userId),
+      boardId: new Types.ObjectId(boardId),
     });
     if (!position) throw new NotFoundException('Posición no encontrada');
     position.currentPrice = dto.currentPrice;
     await position.save();
     const holding = await this.requireInvestmentHolding(
       position.holdingId.toString(),
-      userId,
+      boardId,
     );
     await this.recalculateInvestmentHolding(holding);
     return position;
@@ -490,8 +529,10 @@ export class WealthService implements OnModuleInit {
     holdingId: string,
     dto: CreateInvestmentTransactionDto,
     userId: string,
+    boardId: string,
   ) {
-    const holding = await this.requireInvestmentHolding(holdingId, userId);
+    await this.prepareBoard(boardId, userId);
+    const holding = await this.requireInvestmentHolding(holdingId, boardId);
     const position = await this.positionModel.findOne({
       holdingId: holding._id,
       instrumentId: new Types.ObjectId(dto.instrumentId),
@@ -531,17 +572,18 @@ export class WealthService implements OnModuleInit {
     await this.transactionModel.create({
       ...dto,
       userId: holding.userId,
+      boardId: holding.boardId,
       holdingId: holding._id,
       instrumentId: position.instrumentId,
       fees,
       occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : new Date(),
     });
     await this.recalculateInvestmentHolding(holding);
-    return this.getOverview(userId);
+    return this.getOverview(userId, boardId);
   }
 
-  private async requireInvestmentHolding(id: string, userId: string) {
-    const holding = await this.requireHolding(id, userId);
+  private async requireInvestmentHolding(id: string, boardId: string) {
+    const holding = await this.requireHolding(id, boardId);
     if (holding.type !== HoldingType.INVESTMENT) {
       throw new BadRequestException(
         'La tenencia no es una cuenta de inversión',
@@ -568,19 +610,62 @@ export class WealthService implements OnModuleInit {
     await holding.save();
   }
 
-  private async requireHolding(id: string, userId: string) {
+  private async prepareBoard(boardId: string, userId: string) {
+    await this.participantsService.ensureBoardParticipantAccess(
+      boardId,
+      userId,
+    );
+    const boardObjectId = new Types.ObjectId(boardId);
+    const board = await this.boardModel.findById(boardObjectId).lean();
+    if (!board) throw new NotFoundException('Tablero no encontrado');
+
+    // Compatibility migration for wealth created before it was board-scoped.
+    // It is safe to attach only when this is still the creator's active board.
+    const creator = await this.userModel
+      .findById(board.createdBy)
+      .select('activeBoardId')
+      .lean();
+    if (creator?.activeBoardId?.toString() !== boardId) return;
+
+    const legacyFilter = {
+      userId: board.createdBy,
+      boardId: { $exists: false },
+    };
+    await Promise.all([
+      this.holdingModel.updateMany(legacyFilter, {
+        $set: { boardId: boardObjectId },
+      }),
+      this.goalModel.updateMany(legacyFilter, {
+        $set: { boardId: boardObjectId },
+      }),
+      this.allocationModel.updateMany(legacyFilter, {
+        $set: { boardId: boardObjectId },
+      }),
+      this.eventModel.updateMany(legacyFilter, {
+        $set: { boardId: boardObjectId },
+      }),
+      this.positionModel.updateMany(legacyFilter, {
+        $set: { boardId: boardObjectId },
+      }),
+      this.transactionModel.updateMany(legacyFilter, {
+        $set: { boardId: boardObjectId },
+      }),
+    ]);
+  }
+
+  private async requireHolding(id: string, boardId: string) {
     const holding = await this.holdingModel.findOne({
       _id: new Types.ObjectId(id),
-      userId: new Types.ObjectId(userId),
+      boardId: new Types.ObjectId(boardId),
     });
     if (!holding) throw new NotFoundException('Tenencia no encontrada');
     return holding;
   }
 
-  private async requireGoal(id: string, userId: string) {
+  private async requireGoal(id: string, boardId: string) {
     const goal = await this.goalModel.findOne({
       _id: new Types.ObjectId(id),
-      userId: new Types.ObjectId(userId),
+      boardId: new Types.ObjectId(boardId),
     });
     if (!goal) throw new NotFoundException('Objetivo no encontrado');
     return goal;

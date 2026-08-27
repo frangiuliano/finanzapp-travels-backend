@@ -194,6 +194,19 @@ export class BoardsService implements OnModuleInit {
       .sort({ createdAt: -1 })
       .lean();
 
+    const participantCounts = await this.participantModel.aggregate<{
+      _id: Types.ObjectId;
+      count: number;
+    }>([
+      { $match: { tripId: { $in: boardIds } } },
+      { $group: { _id: '$tripId', count: { $sum: 1 } } },
+    ]);
+    const sharedBoardIds = new Set(
+      participantCounts
+        .filter((item) => item.count > 1)
+        .map((item) => item._id.toString()),
+    );
+
     return boards.map((board) => {
       const participant = participants.find(
         (p) => p.tripId.toString() === board._id.toString(),
@@ -201,6 +214,7 @@ export class BoardsService implements OnModuleInit {
       return {
         ...board,
         type: board.type ?? BoardType.TRAVEL,
+        isShared: sharedBoardIds.has(board._id.toString()),
         userRole: participant?.role || ParticipantRole.MEMBER,
         linkedEverydayBoardId: participant?.linkedEverydayBoardId?.toString(),
       };

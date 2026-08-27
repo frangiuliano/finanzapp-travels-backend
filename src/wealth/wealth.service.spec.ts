@@ -9,6 +9,7 @@ import {
 
 describe('WealthService', () => {
   const userId = new Types.ObjectId().toString();
+  const boardId = new Types.ObjectId().toString();
   const holdingId = new Types.ObjectId();
   const goalId = new Types.ObjectId();
   const holdingModel = {
@@ -33,6 +34,9 @@ describe('WealthService', () => {
     instrumentModel as never,
     positionModel as never,
     transactionModel as never,
+    {} as never,
+    {} as never,
+    {} as never,
   );
 
   const holding = {
@@ -58,6 +62,12 @@ describe('WealthService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest
+      .spyOn(
+        service as unknown as { prepareBoard: () => Promise<void> },
+        'prepareBoard',
+      )
+      .mockResolvedValue();
     holdingModel.findOne.mockResolvedValue(holding);
     goalModel.findOne.mockResolvedValue(goal);
     allocationModel.findOne.mockResolvedValue({ amount: 200 });
@@ -65,7 +75,12 @@ describe('WealthService', () => {
 
   it('rejects lowering a holding below money allocated to goals', async () => {
     await expect(
-      service.adjustBalance(holdingId.toString(), { balance: 199 }, userId),
+      service.adjustBalance(
+        holdingId.toString(),
+        { balance: 199 },
+        userId,
+        boardId,
+      ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -81,6 +96,7 @@ describe('WealthService', () => {
           amount: 900,
         },
         userId,
+        boardId,
       ),
     ).rejects.toThrow('El saldo disponible no alcanza');
 
@@ -97,6 +113,7 @@ describe('WealthService', () => {
           amount: 201,
         },
         userId,
+        boardId,
       ),
     ).rejects.toThrow('No hay suficiente dinero asignado');
 
@@ -115,6 +132,7 @@ describe('WealthService', () => {
           amount: 100,
         },
         userId,
+        boardId,
       ),
     ).rejects.toThrow('deben usar la misma moneda');
   });

@@ -11,6 +11,9 @@ export enum HoldingType {
 
 @Schema({ timestamps: true, collection: 'holdings' })
 export class Holding {
+  @Prop({ type: Types.ObjectId, ref: 'Board', index: true })
+  boardId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
 
@@ -41,7 +44,7 @@ export class Holding {
 
 export type HoldingDocument = Holding & Document;
 export const HoldingSchema = SchemaFactory.createForClass(Holding);
-HoldingSchema.index({ userId: 1, isActive: 1, currency: 1 });
+HoldingSchema.index({ boardId: 1, isActive: 1, currency: 1 });
 
 export enum SavingsGoalStatus {
   ACTIVE = 'active',
@@ -52,6 +55,9 @@ export enum SavingsGoalStatus {
 
 @Schema({ timestamps: true, collection: 'savingsgoals' })
 export class SavingsGoal {
+  @Prop({ type: Types.ObjectId, ref: 'Board', index: true })
+  boardId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
 
@@ -86,10 +92,13 @@ export class SavingsGoal {
 
 export type SavingsGoalDocument = SavingsGoal & Document;
 export const SavingsGoalSchema = SchemaFactory.createForClass(SavingsGoal);
-SavingsGoalSchema.index({ userId: 1, status: 1, priority: 1 });
+SavingsGoalSchema.index({ boardId: 1, status: 1, priority: 1 });
 
 @Schema({ timestamps: true, collection: 'goalallocations' })
 export class GoalAllocation {
+  @Prop({ type: Types.ObjectId, ref: 'Board', index: true })
+  boardId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
 
@@ -107,7 +116,7 @@ export type GoalAllocationDocument = GoalAllocation & Document;
 export const GoalAllocationSchema =
   SchemaFactory.createForClass(GoalAllocation);
 GoalAllocationSchema.index({ goalId: 1, holdingId: 1 }, { unique: true });
-GoalAllocationSchema.index({ userId: 1, holdingId: 1 });
+GoalAllocationSchema.index({ boardId: 1, holdingId: 1 });
 
 export enum WealthEventKind {
   INITIAL_BALANCE = 'initial_balance',
@@ -118,6 +127,9 @@ export enum WealthEventKind {
 
 @Schema({ timestamps: true, collection: 'wealthevents' })
 export class WealthEvent {
+  @Prop({ type: Types.ObjectId, ref: 'Board', index: true })
+  boardId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
 
@@ -148,7 +160,7 @@ export class WealthEvent {
 
 export type WealthEventDocument = WealthEvent & Document;
 export const WealthEventSchema = SchemaFactory.createForClass(WealthEvent);
-WealthEventSchema.index({ userId: 1, occurredAt: -1 });
+WealthEventSchema.index({ boardId: 1, occurredAt: -1 });
 WealthEventSchema.index({ goalId: 1, occurredAt: -1 });
 
 export enum InstrumentType {
@@ -187,6 +199,9 @@ FinancialInstrumentSchema.index({ symbol: 1, exchange: 1 }, { unique: true });
 
 @Schema({ timestamps: true, collection: 'investmentpositions' })
 export class InvestmentPosition {
+  @Prop({ type: Types.ObjectId, ref: 'Board', index: true })
+  boardId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'Holding', required: true })
@@ -212,6 +227,9 @@ export enum InvestmentTransactionType {
 }
 @Schema({ timestamps: true, collection: 'investmenttransactions' })
 export class InvestmentTransaction {
+  @Prop({ type: Types.ObjectId, ref: 'Board', index: true })
+  boardId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'Holding', required: true })

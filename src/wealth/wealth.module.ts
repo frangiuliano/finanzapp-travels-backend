@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WealthController } from './wealth.controller';
 import { WealthService } from './wealth.service';
+import { ParticipantsModule } from '../participants/participants.module';
+import { Board, BoardSchema } from '../trips/board.schema';
+import { User, UserSchema } from '../users/user.schema';
 import {
   GoalAllocation,
   GoalAllocationSchema,
@@ -21,7 +24,10 @@ import {
 
 @Module({
   imports: [
+    ParticipantsModule,
     MongooseModule.forFeature([
+      { name: Board.name, schema: BoardSchema },
+      { name: User.name, schema: UserSchema },
       { name: Holding.name, schema: HoldingSchema },
       { name: SavingsGoal.name, schema: SavingsGoalSchema },
       { name: GoalAllocation.name, schema: GoalAllocationSchema },

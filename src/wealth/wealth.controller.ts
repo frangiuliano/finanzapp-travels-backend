@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { GetUser } from '../auth/decorators/get-user.decorator';
@@ -26,7 +28,6 @@ import {
   UpdatePositionPriceDto,
 } from './wealth.dto';
 import { WealthService } from './wealth.service';
-import { Query } from '@nestjs/common';
 
 @Controller('wealth')
 @UseGuards(JwtAuthGuard)
@@ -34,66 +35,128 @@ export class WealthController {
   constructor(private readonly wealthService: WealthService) {}
 
   @Get()
-  getOverview(@GetUser() user: UserDocument) {
-    return this.wealthService.getOverview(user._id.toString());
+  getOverview(
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.getOverview(
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
   }
 
   @Post('holdings')
-  createHolding(@Body() dto: CreateHoldingDto, @GetUser() user: UserDocument) {
-    return this.wealthService.createHolding(dto, user._id.toString());
+  createHolding(
+    @Body() dto: CreateHoldingDto,
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.createHolding(
+      dto,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
   }
 
   @Patch('holdings/:id')
   updateHolding(
     @Param('id') id: string,
     @Body() dto: UpdateHoldingDto,
+    @Query('boardId') boardId: string,
     @GetUser() user: UserDocument,
   ) {
-    return this.wealthService.updateHolding(id, dto, user._id.toString());
+    return this.wealthService.updateHolding(
+      id,
+      dto,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
   }
 
   @Post('holdings/:id/balance-adjustments')
   adjustBalance(
     @Param('id') id: string,
     @Body() dto: AdjustHoldingBalanceDto,
+    @Query('boardId') boardId: string,
     @GetUser() user: UserDocument,
   ) {
-    return this.wealthService.adjustBalance(id, dto, user._id.toString());
+    return this.wealthService.adjustBalance(
+      id,
+      dto,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
   }
 
   @Delete('holdings/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async archiveHolding(@Param('id') id: string, @GetUser() user: UserDocument) {
-    await this.wealthService.archiveHolding(id, user._id.toString());
+  async archiveHolding(
+    @Param('id') id: string,
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    await this.wealthService.archiveHolding(
+      id,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
   }
 
   @Post('goals')
-  createGoal(@Body() dto: CreateSavingsGoalDto, @GetUser() user: UserDocument) {
-    return this.wealthService.createGoal(dto, user._id.toString());
+  createGoal(
+    @Body() dto: CreateSavingsGoalDto,
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    return this.wealthService.createGoal(
+      dto,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
   }
 
   @Patch('goals/:id')
   updateGoal(
     @Param('id') id: string,
     @Body() dto: UpdateSavingsGoalDto,
+    @Query('boardId') boardId: string,
     @GetUser() user: UserDocument,
   ) {
-    return this.wealthService.updateGoal(id, dto, user._id.toString());
+    return this.wealthService.updateGoal(
+      id,
+      dto,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
   }
 
   @Delete('goals/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async archiveGoal(@Param('id') id: string, @GetUser() user: UserDocument) {
-    await this.wealthService.archiveGoal(id, user._id.toString());
+  async archiveGoal(
+    @Param('id') id: string,
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    await this.wealthService.archiveGoal(
+      id,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
   }
 
   @Post('goals/:id/contributions')
   contribute(
     @Param('id') id: string,
     @Body() dto: CreateGoalContributionDto,
+    @Query('boardId') boardId: string,
     @GetUser() user: UserDocument,
   ) {
-    return this.wealthService.contribute(id, dto, user._id.toString());
+    return this.wealthService.contribute(
+      id,
+      dto,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
   }
 
   @Get('instruments/catalog')
@@ -121,12 +184,14 @@ export class WealthController {
   createPosition(
     @Param('holdingId') holdingId: string,
     @Body() dto: CreatePositionDto,
+    @Query('boardId') boardId: string,
     @GetUser() user: UserDocument,
   ) {
     return this.wealthService.createPosition(
       holdingId,
       dto,
       user._id.toString(),
+      this.requireBoardId(boardId),
     );
   }
 
@@ -134,12 +199,14 @@ export class WealthController {
   updatePositionPrice(
     @Param('positionId') positionId: string,
     @Body() dto: UpdatePositionPriceDto,
+    @Query('boardId') boardId: string,
     @GetUser() user: UserDocument,
   ) {
     return this.wealthService.updatePositionPrice(
       positionId,
       dto,
       user._id.toString(),
+      this.requireBoardId(boardId),
     );
   }
 
@@ -147,8 +214,19 @@ export class WealthController {
   trade(
     @Param('holdingId') holdingId: string,
     @Body() dto: CreateInvestmentTransactionDto,
+    @Query('boardId') boardId: string,
     @GetUser() user: UserDocument,
   ) {
-    return this.wealthService.trade(holdingId, dto, user._id.toString());
+    return this.wealthService.trade(
+      holdingId,
+      dto,
+      user._id.toString(),
+      this.requireBoardId(boardId),
+    );
+  }
+
+  private requireBoardId(value?: string) {
+    if (!value) throw new BadRequestException('boardId es requerido');
+    return value;
   }
 }
