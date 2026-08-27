@@ -218,13 +218,19 @@ export class ParticipantsService {
       throw new NotFoundException('Invitación no encontrada');
     }
 
-    if (invitation.status !== InvitationStatus.PENDING) {
+    if (
+      invitation.status !== InvitationStatus.PENDING &&
+      invitation.status !== InvitationStatus.ACCEPTED
+    ) {
       throw new BadRequestException(
-        `Esta invitación ya fue ${invitation.status === InvitationStatus.ACCEPTED ? 'aceptada' : invitation.status === InvitationStatus.EXPIRED ? 'expirada' : 'cancelada'}`,
+        `Esta invitación ya fue ${invitation.status === InvitationStatus.EXPIRED ? 'expirada' : 'cancelada'}`,
       );
     }
 
-    if (new Date() > invitation.expiresAt) {
+    if (
+      invitation.status === InvitationStatus.PENDING &&
+      new Date() > invitation.expiresAt
+    ) {
       await this.invitationModel.updateOne(
         { _id: invitation._id },
         { status: InvitationStatus.EXPIRED },
@@ -270,13 +276,19 @@ export class ParticipantsService {
       throw new NotFoundException('Invitación no encontrada');
     }
 
-    if (invitation.status !== InvitationStatus.PENDING) {
+    if (
+      invitation.status !== InvitationStatus.PENDING &&
+      invitation.status !== InvitationStatus.ACCEPTED
+    ) {
       throw new BadRequestException(
-        `Esta invitación ya fue ${invitation.status === InvitationStatus.ACCEPTED ? 'aceptada' : invitation.status === InvitationStatus.EXPIRED ? 'expirada' : 'cancelada'}`,
+        `Esta invitación ya fue ${invitation.status === InvitationStatus.EXPIRED ? 'expirada' : 'cancelada'}`,
       );
     }
 
-    if (new Date() > invitation.expiresAt) {
+    if (
+      invitation.status === InvitationStatus.PENDING &&
+      new Date() > invitation.expiresAt
+    ) {
       await this.invitationModel.updateOne(
         { _id: invitation._id },
         { status: InvitationStatus.EXPIRED },
@@ -284,9 +296,11 @@ export class ParticipantsService {
       throw new BadRequestException('Esta invitación ha expirado');
     }
 
-    const user = await this.userModel.findOne({ email: invitation.email });
+    const invitedUser = await this.userModel.findOne({
+      email: invitation.email,
+    });
 
-    if (!user) {
+    if (!invitedUser) {
       return {
         success: false,
         message: 'Debes crear una cuenta para aceptar esta invitación',
@@ -301,10 +315,42 @@ export class ParticipantsService {
       );
     }
 
-    if (user._id.toString() !== userId) {
+    const authenticatedUser = await this.userModel.findById(userId);
+
+    if (
+      !authenticatedUser ||
+      authenticatedUser.email.toLowerCase().trim() !==
+        invitation.email.toLowerCase().trim()
+    ) {
       throw new ForbiddenException(
         'Esta invitación fue enviada a otro email. Inicia sesión con el email correcto.',
       );
+    }
+
+    const user = authenticatedUser;
+
+    if (invitation.status === InvitationStatus.ACCEPTED) {
+      const participant = await this.participantModel.findOne({
+        tripId: invitation.tripId,
+        userId: user._id,
+      });
+
+      if (!participant) {
+        throw new BadRequestException(
+          'La invitación figura aceptada, pero no se encontró la membresía del tablero',
+        );
+      }
+
+      await this.userModel.updateOne(
+        { _id: user._id },
+        { $set: { activeBoardId: invitation.tripId } },
+      );
+
+      return {
+        success: true,
+        message: 'Ya eres participante de este tablero',
+        participant,
+      };
     }
 
     const guest = await this.participantModel.findOne({
@@ -321,6 +367,11 @@ export class ParticipantsService {
       await this.invitationModel.updateOne(
         { _id: invitation._id },
         { status: InvitationStatus.ACCEPTED },
+      );
+
+      await this.userModel.updateOne(
+        { _id: user._id },
+        { $set: { activeBoardId: invitation.tripId } },
       );
 
       this.logger.log(
@@ -350,6 +401,11 @@ export class ParticipantsService {
         { status: InvitationStatus.ACCEPTED },
       );
 
+      await this.userModel.updateOne(
+        { _id: user._id },
+        { $set: { activeBoardId: invitation.tripId } },
+      );
+
       return {
         success: true,
         message: 'Ya eres participante de este tablero',
@@ -366,6 +422,11 @@ export class ParticipantsService {
     await this.invitationModel.updateOne(
       { _id: invitation._id },
       { status: InvitationStatus.ACCEPTED },
+    );
+
+    await this.userModel.updateOne(
+      { _id: user._id },
+      { $set: { activeBoardId: invitation.tripId } },
     );
 
     this.logger.log(
