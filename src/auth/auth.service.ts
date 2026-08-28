@@ -23,6 +23,7 @@ import {
   RegisterResponse,
 } from './interfaces/jwt-payload.interface';
 import { hashToken } from '../common/utils/token-hash.util';
+import { toSafeErrorMessage } from '../common/utils/log-redaction.util';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -228,7 +229,7 @@ export class AuthService {
         }
       }
 
-      this.logger.error('Refresh unexpected error', error);
+      this.logger.error('Refresh unexpected error', toSafeErrorMessage(error));
       throw new UnauthorizedException('Error al refrescar el token');
     }
   }

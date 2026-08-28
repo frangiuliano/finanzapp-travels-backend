@@ -16,6 +16,7 @@ import { ExpenseStatus, PaymentMethod } from '../../expenses/expense.schema';
 import { Category } from '../../categories/category.schema';
 import { PaymentMethod as PaymentMethodEntity } from '../../payment-methods/payment-method.schema';
 import { getDocumentId } from '../utils/bot-helpers';
+import { toSafeErrorMessage } from '../../common/utils/log-redaction.util';
 
 @Injectable()
 export class EverydayExpenseHandler {
@@ -236,7 +237,10 @@ export class EverydayExpenseHandler {
         '✅ ¡Gasto guardado en tu tablero everyday!\n\nPodés verlo en la web.',
       );
     } catch (error) {
-      this.logger.error('Error creating everyday expense', error);
+      this.logger.error(
+        'Error creating everyday expense',
+        toSafeErrorMessage(error),
+      );
       await this.telegramClient.sendMessage(
         telegramUserId,
         '❌ Error al guardar el gasto. Revisá los datos e intentá de nuevo.',

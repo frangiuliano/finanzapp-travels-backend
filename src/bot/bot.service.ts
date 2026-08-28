@@ -31,6 +31,7 @@ import { UserPreferencesService } from '../users/user-preferences.service';
 import { BoardType } from '../trips/board.schema';
 import { BoardCommandHandler } from './handlers/board-command.handler';
 import { EverydayExpenseHandler } from './handlers/everyday-expense.handler';
+import { toSafeErrorMessage } from '../common/utils/log-redaction.util';
 
 @Injectable()
 export class BotService {
@@ -70,7 +71,10 @@ export class BotService {
         this.logger.warn('Update no tiene message ni callback_query');
       }
     } catch (error) {
-      this.logger.error('Error procesando actualización:', error);
+      this.logger.error(
+        'Error procesando actualización',
+        toSafeErrorMessage(error),
+      );
     }
   }
 
@@ -78,7 +82,7 @@ export class BotService {
     message: TelegramUpdate['message'],
   ): Promise<void> {
     this.logger.log('=== handleMessage llamado ===');
-    this.logger.log(`Message text: ${message?.text}`);
+    this.logger.log(`Message text length: ${message?.text?.length ?? 0}`);
     this.logger.log(`Message chat: ${!!message?.chat}`);
 
     if (!message?.text || !message?.chat) {
@@ -89,7 +93,7 @@ export class BotService {
     const telegramUserId = message.from.id;
     const text = message.text.trim();
     this.logger.log(`Telegram User ID: ${telegramUserId}`);
-    this.logger.log(`Text: ${text}`);
+    this.logger.log(`Text length: ${text.length}`);
 
     if (text.startsWith('/start')) {
       this.logger.log('Es comando /start');
@@ -340,7 +344,7 @@ export class BotService {
 
     const parsed = await this.messageParser.parse(text, parseContext);
 
-    this.logger.log(`Parsed expense: ${JSON.stringify(parsed)}`);
+    this.logger.log('Mensaje de gasto parseado correctamente');
     this.logger.log(
       `parsed.isDivisible value: ${parsed.isDivisible} (type: ${typeof parsed.isDivisible})`,
     );
@@ -372,7 +376,7 @@ export class BotService {
               word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
           )
           .join(' ');
-        this.logger.log(`Extracted merchantName: ${merchantName}`);
+        this.logger.log('Nombre de comercio detectado en el mensaje');
       } else {
         merchantName = undefined;
       }
@@ -1319,9 +1323,6 @@ export class BotService {
     this.logger.log(
       `pendingExpense.isDivisible: ${botUpdate.pendingExpense?.isDivisible}`,
     );
-    this.logger.log(
-      `pendingExpense completo: ${JSON.stringify(botUpdate.pendingExpense)}`,
-    );
 
     const message = '📊 ¿Es un gasto personal o compartido?';
 
@@ -1797,18 +1798,11 @@ export class BotService {
           return;
         }
 
-        this.logger.log(
-          `PendingExpense antes de actualizar: ${JSON.stringify(updatedBotUpdate.pendingExpense)}`,
-        );
-
         updatedBotUpdate.pendingExpense.budgetId =
           bucketId === 'none' ? undefined : bucketId;
         updatedBotUpdate.markModified('pendingExpense');
         this.logger.log(
           `Bucket seleccionado - budgetId: ${updatedBotUpdate.pendingExpense.budgetId}`,
-        );
-        this.logger.log(
-          `PendingExpense después de actualizar: ${JSON.stringify(updatedBotUpdate.pendingExpense)}`,
         );
 
         if (!updatedBotUpdate.pendingExpense.paidByParticipantId) {
@@ -2068,7 +2062,7 @@ export class BotService {
         await this.telegramClient.answerCallbackQuery(callbackQueryId);
       }
     } catch (error) {
-      this.logger.error('Error procesando callback:', error);
+      this.logger.error('Error procesando callback', toSafeErrorMessage(error));
       await this.telegramClient.answerCallbackQuery(
         callbackQueryId,
         '❌ Ocurrió un error. Por favor, intenta de nuevo.',
@@ -2236,7 +2230,7 @@ export class BotService {
         expense.budgetId,
         botUpdate.userId.toString(),
       );
-      this.logger.log(`Budget encontrado: ${budget?.name || 'null'}`);
+      this.logger.log(`Budget encontrado: ${budget ? 'sí' : 'no'}`);
       budgetName = budget?.name || 'Sin presupuesto';
     }
 
@@ -2359,7 +2353,7 @@ export class BotService {
         confirmationMessage,
       );
     } catch (error) {
-      this.logger.error('Error creando gasto:', error);
+      this.logger.error('Error creando gasto', toSafeErrorMessage(error));
       await this.telegramClient.sendMessage(
         telegramUserId,
         '❌ Error al guardar el gasto. Por favor, intenta nuevamente.',

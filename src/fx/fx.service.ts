@@ -13,6 +13,7 @@ import {
   toArgentinaDatosDatePath,
   type ArgentinaFxCasa,
 } from './argentina-fx.constants';
+import { toSafeErrorMessage } from '../common/utils/log-redaction.util';
 
 export interface FxSnapshot {
   fxRateToBoardCurrency: number;
@@ -231,7 +232,7 @@ export class FxService {
     } catch (error) {
       this.logger.error(
         `DolarApi request failed for casa ${this.argentinaCasa}`,
-        error,
+        toSafeErrorMessage(error),
       );
       throw new ServiceUnavailableException('No se pudo contactar a DolarApi');
     }
@@ -271,7 +272,7 @@ export class FxService {
     } catch (error) {
       this.logger.error(
         `ArgentinaDatos request failed for ${this.argentinaCasa} on ${isoDate}`,
-        error,
+        toSafeErrorMessage(error),
       );
       throw new ServiceUnavailableException(
         'No se pudo contactar a ArgentinaDatos',
@@ -334,7 +335,7 @@ export class FxService {
     } catch (error) {
       this.logger.error(
         `FX historical request failed for ${fromCurrency}->${toCurrency} on ${date}`,
-        error,
+        toSafeErrorMessage(error),
       );
       throw new ServiceUnavailableException(
         'No se pudo contactar al proveedor de tipos de cambio',
@@ -391,7 +392,7 @@ export class FxService {
     } catch (error) {
       this.logger.error(
         `FX provider request failed for ${fromCurrency}->${toCurrency}`,
-        error,
+        toSafeErrorMessage(error),
       );
       throw new ServiceUnavailableException(
         'No se pudo contactar al proveedor de tipos de cambio',

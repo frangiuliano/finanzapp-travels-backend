@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Groq from 'groq-sdk';
+import { toSafeErrorMessage } from '../../common/utils/log-redaction.util';
 
 interface ParsedExpense {
   amount: number;
@@ -90,7 +91,7 @@ IMPORTANTE:
 
       return parsed;
     } catch (error) {
-      this.logger.error('Error en LLM parser:', error);
+      this.logger.error('Error en LLM parser', toSafeErrorMessage(error));
       return null;
     }
   }

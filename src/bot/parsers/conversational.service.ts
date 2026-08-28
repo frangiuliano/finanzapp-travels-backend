@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Groq from 'groq-sdk';
+import { toSafeErrorMessage } from '../../common/utils/log-redaction.util';
 
 interface ConversationContext {
   userName: string;
@@ -110,7 +111,10 @@ INSTRUCCIONES CRÍTICAS:
         extractedData,
       };
     } catch (error) {
-      this.logger.error('Error en conversational service:', error);
+      this.logger.error(
+        'Error en conversational service',
+        toSafeErrorMessage(error),
+      );
       return null;
     }
   }
@@ -181,7 +185,10 @@ IMPORTANTE:
         understood: parsed.understood || false,
       };
     } catch (error) {
-      this.logger.error('Error parseando respuesta natural:', error);
+      this.logger.error(
+        'Error parseando respuesta natural',
+        toSafeErrorMessage(error),
+      );
       return { understood: false };
     }
   }

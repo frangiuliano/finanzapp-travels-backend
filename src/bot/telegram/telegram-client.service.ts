@@ -1,6 +1,13 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqualStrings } from '../../common/utils/token-hash.util';
+import { toSafeErrorMessage } from '../../common/utils/log-redaction.util';
+
+interface TelegramApiError {
+  ok: boolean;
+  error_code?: number;
+  description?: string;
+}
 
 @Injectable()
 export class TelegramClientService implements OnModuleInit {
@@ -68,7 +75,10 @@ export class TelegramClientService implements OnModuleInit {
         this.logger.error(`❌ Error configurando webhook: ${data.description}`);
       }
     } catch (error) {
-      this.logger.error('Error configurando webhook:', error);
+      this.logger.error(
+        'Error configurando webhook',
+        toSafeErrorMessage(error),
+      );
     }
   }
 
@@ -110,11 +120,13 @@ export class TelegramClientService implements OnModuleInit {
       });
 
       if (!response.ok) {
-        const error = (await response.json()) as Record<string, unknown>;
-        this.logger.error('Error enviando mensaje a Telegram:', error);
+        const error = (await response.json()) as TelegramApiError;
+        this.logger.error(
+          `Error enviando mensaje a Telegram: code=${error.error_code ?? 'unknown'} description=${error.description ?? 'unknown'}`,
+        );
       }
     } catch (error) {
-      this.logger.error('Error en sendMessage:', error);
+      this.logger.error('Error en sendMessage', toSafeErrorMessage(error));
     }
   }
 
@@ -148,11 +160,16 @@ export class TelegramClientService implements OnModuleInit {
       });
 
       if (!response.ok) {
-        const error = (await response.json()) as Record<string, unknown>;
-        this.logger.error('Error enviando mensaje con botones:', error);
+        const error = (await response.json()) as TelegramApiError;
+        this.logger.error(
+          `Error enviando mensaje con botones: code=${error.error_code ?? 'unknown'} description=${error.description ?? 'unknown'}`,
+        );
       }
     } catch (error) {
-      this.logger.error('Error en sendMessageWithButtons:', error);
+      this.logger.error(
+        'Error en sendMessageWithButtons',
+        toSafeErrorMessage(error),
+      );
     }
   }
 
@@ -169,7 +186,10 @@ export class TelegramClientService implements OnModuleInit {
         }),
       });
     } catch (error) {
-      this.logger.error('Error en answerCallbackQuery:', error);
+      this.logger.error(
+        'Error en answerCallbackQuery',
+        toSafeErrorMessage(error),
+      );
     }
   }
 }

@@ -13,6 +13,7 @@ import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { UserDocument } from '../users/user.schema';
 import { TelegramClientService } from './telegram/telegram-client.service';
+import { toSafeErrorMessage } from '../common/utils/log-redaction.util';
 
 interface TelegramUpdate {
   message?: {
@@ -55,8 +56,11 @@ export class BotController {
     this.logger.debug(`Webhook Telegram recibido (${updateType})`);
 
     setImmediate(() => {
-      this.botService.handleUpdate(update).catch((error) => {
-        this.logger.error('❌ Error procesando update en background:', error);
+      this.botService.handleUpdate(update).catch((error: unknown) => {
+        this.logger.error(
+          '❌ Error procesando update en background',
+          toSafeErrorMessage(error),
+        );
       });
     });
 

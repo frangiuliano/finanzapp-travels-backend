@@ -2,6 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MailerService } from '@nestjs-modules/mailer';
 import { ConfigService } from '@nestjs/config';
 import { BoardType } from '../trips/board.schema';
+import {
+  maskEmail,
+  toSafeErrorMessage,
+} from '../common/utils/log-redaction.util';
 
 @Injectable()
 export class NotificationsService {
@@ -45,11 +49,11 @@ export class NotificationsService {
         },
       });
 
-      this.logger.log(`Email de verificación enviado a ${email}`);
+      this.logger.log(`Email de verificación enviado a ${maskEmail(email)}`);
     } catch (error) {
       this.logger.error(
-        `Error al enviar email de verificación a ${email}:`,
-        error,
+        `Error al enviar email de verificación a ${maskEmail(email)}`,
+        toSafeErrorMessage(error),
       );
     }
   }
@@ -71,9 +75,14 @@ export class NotificationsService {
         },
       });
 
-      this.logger.log(`Email de reset de contraseña enviado a ${email}`);
+      this.logger.log(
+        `Email de reset de contraseña enviado a ${maskEmail(email)}`,
+      );
     } catch (error) {
-      this.logger.error(`Error al enviar email de reset a ${email}:`, error);
+      this.logger.error(
+        `Error al enviar email de reset a ${maskEmail(email)}`,
+        toSafeErrorMessage(error),
+      );
     }
   }
 
@@ -93,11 +102,11 @@ export class NotificationsService {
         },
       });
 
-      this.logger.log(`Email de bienvenida enviado a ${email}`);
+      this.logger.log(`Email de bienvenida enviado a ${maskEmail(email)}`);
     } catch (error) {
       this.logger.error(
-        `Error al enviar email de bienvenida a ${email}:`,
-        error,
+        `Error al enviar email de bienvenida a ${maskEmail(email)}`,
+        toSafeErrorMessage(error),
       );
     }
   }
@@ -170,12 +179,12 @@ export class NotificationsService {
       });
 
       this.logger.log(
-        `Email de invitación a ${boardKind} enviado a ${email} para "${boardName}"`,
+        `Email de invitación a ${boardKind} enviado a ${maskEmail(email)}`,
       );
     } catch (error) {
       this.logger.error(
-        `Error al enviar email de invitación a ${email}:`,
-        error,
+        `Error al enviar email de invitación a ${maskEmail(email)}`,
+        toSafeErrorMessage(error),
       );
     }
   }

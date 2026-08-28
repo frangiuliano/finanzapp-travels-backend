@@ -44,9 +44,7 @@ export class UserLinkingService {
     }
 
     const token = parts[1].trim();
-    this.logger.log(
-      `Token recibido para usuario ${telegramUserId}: ${token.substring(0, 8)}...`,
-    );
+    this.logger.log(`Token recibido para usuario ${telegramUserId}`);
     await this.linkUserWithToken(telegramUserId, token);
   }
 
@@ -65,14 +63,14 @@ export class UserLinkingService {
       return;
     }
 
-    this.logger.log(`Buscando token en BD: ${trimmedToken.substring(0, 8)}...`);
+    this.logger.log(`Buscando token en BD para usuario ${telegramUserId}`);
     const linkToken = await this.linkTokenModel
       .findOne({ token: hashToken(trimmedToken) })
       .exec();
 
     if (!linkToken) {
       this.logger.warn(
-        `Token no encontrado en BD: ${trimmedToken.substring(0, 8)}...`,
+        `Token no encontrado en BD para usuario ${telegramUserId}`,
       );
       await this.telegramClient.sendMessage(
         telegramUserId,
