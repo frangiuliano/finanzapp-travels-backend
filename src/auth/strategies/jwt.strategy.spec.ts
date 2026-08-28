@@ -30,11 +30,31 @@ describe('JwtStrategy', () => {
   });
 
   it('accepts an active user whose email is verified', async () => {
-    const user = { isActive: true, emailVerified: true } as UserDocument;
+    const user = {
+      isActive: true,
+      emailVerified: true,
+      authVersion: 0,
+    } as UserDocument;
     const strategy = buildStrategy(user);
 
     await expect(
       strategy.validate({ sub: 'user-id', email: 'user@example.com' }),
     ).resolves.toBe(user);
+  });
+
+  it('rejects an access token issued before session revocation', async () => {
+    const strategy = buildStrategy({
+      isActive: true,
+      emailVerified: true,
+      authVersion: 2,
+    });
+
+    await expect(
+      strategy.validate({
+        sub: 'user-id',
+        email: 'old@example.com',
+        authVersion: 1,
+      }),
+    ).rejects.toThrow('La sesión ya no es válida');
   });
 });

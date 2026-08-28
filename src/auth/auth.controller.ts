@@ -9,6 +9,7 @@ import {
   Param,
   Query,
   Patch,
+  Delete,
   Res,
   Req,
   UnauthorizedException,
@@ -22,6 +23,7 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ConfirmEmailChangeDto } from './dto/confirm-email-change.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserPreferencesDto } from '../users/dto/update-user-preferences.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -214,6 +216,29 @@ export class AuthController {
       updateProfileDto,
     );
     return updatedUser;
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('confirm-email-change')
+  @HttpCode(HttpStatus.OK)
+  async confirmEmailChange(
+    @Body() dto: ConfirmEmailChangeDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.authService.confirmEmailChange(dto.token);
+    res.clearCookie('refreshToken', getRefreshTokenCookieOptions());
+    return {
+      message: 'Email actualizado. Inicia sesión nuevamente.',
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('pending-email-change')
+  @HttpCode(HttpStatus.OK)
+  async cancelEmailChange(@GetUser() user: UserDocument) {
+    await this.authService.cancelEmailChange(user._id.toString());
+    return { message: 'Solicitud de cambio de email cancelada.' };
   }
 
   @UseGuards(JwtAuthGuard)

@@ -102,6 +102,31 @@ export class NotificationsService {
     }
   }
 
+  async sendEmailChangeConfirmation(
+    email: string,
+    token: string,
+  ): Promise<void> {
+    const confirmationUrl = `${this.frontendUrl}/auth/confirm-email-change?token=${token}`;
+    await this.mailerService.sendMail({
+      to: email,
+      subject: 'Confirma tu nuevo email - FinanzApp',
+      template: 'email-change-confirmation',
+      context: { confirmationUrl, currentYear: new Date().getFullYear() },
+    });
+  }
+
+  async sendEmailChangeRequestedNotice(
+    oldEmail: string,
+    newEmail: string,
+  ): Promise<void> {
+    await this.mailerService.sendMail({
+      to: oldEmail,
+      subject: 'Solicitud de cambio de email - FinanzApp',
+      template: 'email-change-requested',
+      context: { newEmail, currentYear: new Date().getFullYear() },
+    });
+  }
+
   async sendBoardInvitationEmail(
     email: string,
     inviterName: string,

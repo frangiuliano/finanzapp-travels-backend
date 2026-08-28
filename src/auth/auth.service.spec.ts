@@ -24,6 +24,11 @@ describe('AuthService security flows', () => {
       lastName: 'User',
       emailVerified: false,
       isActive: true,
+      authVersion: 0,
+      refreshTokens: ['stored-token'],
+      pendingEmail: undefined as string | undefined,
+      pendingEmailToken: undefined as string | undefined,
+      pendingEmailExpires: undefined as Date | undefined,
       save: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -40,6 +45,8 @@ describe('AuthService security flows', () => {
     };
     const notificationsService = {
       sendVerificationEmail: jest.fn().mockResolvedValue(undefined),
+      sendEmailChangeConfirmation: jest.fn().mockResolvedValue(undefined),
+      sendEmailChangeRequestedNotice: jest.fn().mockResolvedValue(undefined),
     };
 
     const service = new AuthService(
@@ -127,5 +134,73 @@ describe('AuthService security flows', () => {
       'Debes verificar tu email antes de continuar',
     );
     expect(context.jwtService.sign).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current email while requesting confirmation of a new one', async () => {
+    const context = buildService();
+    context.savedUser.emailVerified = true;
+    context.userModel.findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(context.savedUser),
+    });
+    context.userModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(null),
+    });
+
+    const result = await context.service.updateProfile('user-id', {
+      firstName: 'New',
+      lastName: 'User',
+      email: 'Changed@Example.com',
+    });
+
+    expect(result.email).toBe('new.user@example.com');
+    expect(result.pendingEmail).toBe('changed@example.com');
+    expect(context.savedUser.email).toBe('new.user@example.com');
+    expect(
+      context.notificationsService.sendEmailChangeConfirmation,
+    ).toHaveBeenCalledWith('changed@example.com', expect.any(String));
+    expect(
+      context.notificationsService.sendEmailChangeRequestedNotice,
+    ).toHaveBeenCalledWith('new.user@example.com', 'changed@example.com');
+  });
+
+  it('confirms the pending email and invalidates every session', async () => {
+    const context = buildService();
+    context.savedUser.pendingEmail = 'changed@example.com';
+    context.savedUser.pendingEmailToken = 'hashed-token';
+    context.savedUser.pendingEmailExpires = new Date(Date.now() + 60_000);
+    context.userModel.findOne
+      .mockReturnValueOnce({
+        select: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(context.savedUser),
+        }),
+      })
+      .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(null) });
+
+    await context.service.confirmEmailChange('raw-token');
+
+    expect(context.savedUser.email).toBe('changed@example.com');
+    expect(context.savedUser.pendingEmail).toBeUndefined();
+    expect(context.savedUser.refreshTokens).toEqual([]);
+    expect(context.savedUser.authVersion).toBe(1);
+    expect(context.savedUser.save).toHaveBeenCalled();
+  });
+
+  it('cancels a pending email change and invalidates its confirmation token', async () => {
+    const context = buildService();
+    context.savedUser.pendingEmail = 'changed@example.com';
+    context.savedUser.pendingEmailToken = 'hashed-token';
+    context.savedUser.pendingEmailExpires = new Date(Date.now() + 60_000);
+    context.userModel.findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(context.savedUser),
+    });
+
+    await context.service.cancelEmailChange('user-id');
+
+    expect(context.savedUser.pendingEmail).toBeUndefined();
+    expect(context.savedUser.pendingEmailToken).toBeUndefined();
+    expect(context.savedUser.pendingEmailExpires).toBeUndefined();
+    expect(context.savedUser.save).toHaveBeenCalledWith({
+      validateBeforeSave: false,
+    });
   });
 });

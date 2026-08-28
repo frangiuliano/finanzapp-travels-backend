@@ -240,6 +240,7 @@ export class AuthService {
     const payload: JwtSignPayload = {
       sub: user._id.toString(),
       email: user.email,
+      authVersion: user.authVersion ?? 0,
     };
 
     const jwtSecret = this.configService.get<string>('JWT_SECRET');
@@ -333,6 +334,7 @@ export class AuthService {
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
     user.refreshTokens = [];
+    user.authVersion = (user.authVersion ?? 0) + 1;
     await user.save();
   }
 
@@ -403,6 +405,7 @@ export class AuthService {
     firstName: string;
     lastName: string;
     emailVerified: boolean;
+    pendingEmail?: string;
     lastLogin?: Date;
   }> {
     const user = await this.userModel.findById(userId).exec();
@@ -411,20 +414,26 @@ export class AuthService {
       throw new BadRequestException('Usuario no encontrado');
     }
 
-    if (
-      updateProfileDto.email &&
-      updateProfileDto.email.toLowerCase() !== user.email
-    ) {
+    let pendingEmailToken: string | undefined;
+    const previousEmail = user.email;
+    const normalizedRequestedEmail = updateProfileDto.email
+      ?.toLowerCase()
+      .trim();
+    if (normalizedRequestedEmail && normalizedRequestedEmail !== user.email) {
+      const normalizedEmail = normalizedRequestedEmail;
       const existingUserByEmail = await this.userModel
         .findOne({
-          email: updateProfileDto.email.toLowerCase(),
+          email: normalizedEmail,
           _id: { $ne: userId },
         })
         .exec();
       if (existingUserByEmail) {
         throw new ConflictException('El email ya está en uso');
       }
-      user.email = updateProfileDto.email.toLowerCase();
+      pendingEmailToken = crypto.randomBytes(32).toString('hex');
+      user.pendingEmail = normalizedEmail;
+      user.pendingEmailToken = hashToken(pendingEmailToken);
+      user.pendingEmailExpires = new Date(Date.now() + 60 * 60 * 1000);
     }
 
     if (
@@ -451,6 +460,17 @@ export class AuthService {
     user.lastName = updateProfileDto.lastName;
     await user.save();
 
+    if (pendingEmailToken && user.pendingEmail) {
+      await this.notificationsService.sendEmailChangeConfirmation(
+        user.pendingEmail,
+        pendingEmailToken,
+      );
+      await this.notificationsService.sendEmailChangeRequestedNotice(
+        previousEmail,
+        user.pendingEmail,
+      );
+    }
+
     return {
       id: user._id.toString(),
       email: user.email,
@@ -458,8 +478,61 @@ export class AuthService {
       firstName: user.firstName,
       lastName: user.lastName,
       emailVerified: user.emailVerified,
+      pendingEmail: user.pendingEmail,
       lastLogin: user.lastLogin,
     };
+  }
+
+  async confirmEmailChange(token: string): Promise<void> {
+    const tokenHash = hashToken(token);
+    const user = await this.userModel
+      .findOne({
+        pendingEmailToken: tokenHash,
+        pendingEmailExpires: { $gt: new Date() },
+      })
+      .select('+pendingEmailToken +pendingEmailExpires +refreshTokens')
+      .exec();
+
+    if (!user?.pendingEmail) {
+      throw new BadRequestException('Token inválido o expirado');
+    }
+
+    const pendingEmail = user.pendingEmail;
+    const existingUser = await this.userModel
+      .findOne({ email: pendingEmail, _id: { $ne: user._id } })
+      .exec();
+    if (existingUser) {
+      throw new ConflictException('El email ya está en uso');
+    }
+
+    user.email = pendingEmail;
+    user.pendingEmail = undefined;
+    user.pendingEmailToken = undefined;
+    user.pendingEmailExpires = undefined;
+    user.refreshTokens = [];
+    user.authVersion = (user.authVersion ?? 0) + 1;
+
+    try {
+      await user.save();
+    } catch (error) {
+      const errorCode = (error as { code?: unknown } | null)?.code;
+      if (typeof errorCode === 'number' && errorCode === 11000) {
+        throw new ConflictException('El email ya está en uso');
+      }
+      throw error;
+    }
+  }
+
+  async cancelEmailChange(userId: string): Promise<void> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+
+    user.pendingEmail = undefined;
+    user.pendingEmailToken = undefined;
+    user.pendingEmailExpires = undefined;
+    await user.save({ validateBeforeSave: false });
   }
 
   async getUserProfile(userId: string): Promise<{
@@ -469,6 +542,7 @@ export class AuthService {
     firstName: string;
     lastName: string;
     emailVerified: boolean;
+    pendingEmail?: string;
     lastLogin?: Date;
     activeBoardId: string | null;
   }> {
@@ -490,6 +564,7 @@ export class AuthService {
       firstName: user.firstName,
       lastName: user.lastName,
       emailVerified: user.emailVerified,
+      pendingEmail: user.pendingEmail,
       lastLogin: user.lastLogin,
       activeBoardId: user.activeBoardId?.toString() ?? null,
     };

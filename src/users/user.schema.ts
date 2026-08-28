@@ -31,6 +31,18 @@ export class User {
   @Prop({ default: false })
   emailVerified: boolean;
 
+  @Prop({ default: 0 })
+  authVersion: number;
+
+  @Prop({ lowercase: true, trim: true, default: null })
+  pendingEmail?: string;
+
+  @Prop({ default: null, select: false })
+  pendingEmailToken?: string;
+
+  @Prop({ default: null, select: false })
+  pendingEmailExpires?: Date;
+
   @Prop({ default: null, select: false })
   emailVerificationToken?: string;
 

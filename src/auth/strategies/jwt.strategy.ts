@@ -42,6 +42,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       );
     }
 
+    if ((payload.authVersion ?? 0) !== (user.authVersion ?? 0)) {
+      throw new UnauthorizedException('La sesión ya no es válida');
+    }
+
     return user;
   }
 }
