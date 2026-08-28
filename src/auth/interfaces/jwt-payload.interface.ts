@@ -7,6 +7,11 @@ export interface JwtPayload {
 
 export type JwtSignPayload = Omit<JwtPayload, 'iat' | 'exp'>;
 
+export interface RegisterResponse {
+  message: string;
+  email: string;
+}
+
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;

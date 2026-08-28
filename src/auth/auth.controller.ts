@@ -21,6 +21,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserPreferencesDto } from '../users/dto/update-user-preferences.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -59,22 +60,8 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  async register(
-    @Body() registerDto: RegisterDto,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const result = await this.authService.register(registerDto);
-
-    res.cookie(
-      'refreshToken',
-      result.refreshToken,
-      getRefreshTokenCookieOptions(),
-    );
-
-    return {
-      accessToken: result.accessToken,
-      user: result.user,
-    };
+  async register(@Body() registerDto: RegisterDto) {
+    return this.authService.register(registerDto);
   }
 
   @Public()
@@ -177,12 +164,16 @@ export class AuthController {
     }
   }
 
-  @UseGuards(JwtAuthGuard)
+  @Public()
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post('resend-verification')
   @HttpCode(HttpStatus.OK)
-  async resendVerification(@GetUser() user: UserDocument) {
-    await this.authService.resendVerificationEmail(user._id.toString());
-    return { message: 'Email de verificación reenviado exitosamente' };
+  async resendVerification(@Body() dto: ResendVerificationDto) {
+    await this.authService.resendVerificationEmail(dto.email);
+    return {
+      message:
+        'Si existe una cuenta pendiente para ese email, recibirás un nuevo enlace de verificación.',
+    };
   }
 
   @UseGuards(JwtAuthGuard)

@@ -36,6 +36,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Usuario no encontrado o inactivo');
     }
 
+    if (!user.emailVerified) {
+      throw new UnauthorizedException(
+        'Debes verificar tu email antes de continuar',
+      );
+    }
+
     return user;
   }
 }

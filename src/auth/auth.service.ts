@@ -20,6 +20,7 @@ import {
   JwtPayload,
   JwtSignPayload,
   AuthResponse,
+  RegisterResponse,
 } from './interfaces/jwt-payload.interface';
 import { hashToken } from '../common/utils/token-hash.util';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -79,7 +80,7 @@ export class AuthService {
     return generatedUsername.toLowerCase();
   }
 
-  async register(registerDto: RegisterDto): Promise<AuthResponse> {
+  async register(registerDto: RegisterDto): Promise<RegisterResponse> {
     const { email, username, password, firstName, lastName } = registerDto;
 
     const existingUserByEmail = await this.userModel
@@ -110,16 +111,15 @@ export class AuthService {
 
     await user.save();
 
-    const tokens = await this.generateTokens(user);
-
     await this.notificationsService.sendVerificationEmail(
       user.email,
       emailVerificationToken,
     );
 
     return {
-      ...tokens,
-      user: this.sanitizeUser(user),
+      message:
+        'Cuenta creada. Revisa tu email para verificarla antes de iniciar sesión.',
+      email: user.email,
     };
   }
 
@@ -184,6 +184,12 @@ export class AuthService {
 
       if (!user.isActive) {
         throw new UnauthorizedException('Tu cuenta ha sido desactivada');
+      }
+
+      if (!user.emailVerified) {
+        throw new UnauthorizedException(
+          'Debes verificar tu email antes de continuar',
+        );
       }
 
       const tokenHash = hashToken(refreshToken);
@@ -353,16 +359,15 @@ export class AuthService {
     );
   }
 
-  async resendVerificationEmail(userId: string): Promise<void> {
-    const user = await this.userModel.findById(userId).exec();
+  async resendVerificationEmail(email: string): Promise<void> {
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await this.userModel
+      .findOne({ email: normalizedEmail })
+      .exec();
 
-    if (!user) {
-      throw new BadRequestException('Usuario no encontrado');
-    }
-
-    if (user.emailVerified) {
-      throw new BadRequestException('El email ya ha sido verificado');
-    }
+    // Keep the endpoint non-enumerable: missing and already verified accounts
+    // intentionally produce the same successful response as pending accounts.
+    if (!user || user.emailVerified || !user.isActive) return;
 
     const emailVerificationToken = crypto.randomBytes(32).toString('hex');
     user.emailVerificationToken = hashToken(emailVerificationToken);
