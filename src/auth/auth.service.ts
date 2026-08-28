@@ -88,14 +88,18 @@ export class AuthService {
       .findOne({ email: email.toLowerCase() })
       .exec();
     if (existingUserByEmail) {
-      throw new ConflictException('El email ya está registrado');
+      throw new ConflictException(
+        'No se pudo crear la cuenta con los datos indicados',
+      );
     }
 
     const existingUserByUsername = await this.userModel
       .findOne({ username: username.toLowerCase() })
       .exec();
     if (existingUserByUsername) {
-      throw new ConflictException('El nombre de usuario ya está en uso');
+      throw new ConflictException(
+        'No se pudo crear la cuenta con los datos indicados',
+      );
     }
 
     const emailVerificationToken = crypto.randomBytes(32).toString('hex');

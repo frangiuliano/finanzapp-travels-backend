@@ -87,6 +87,25 @@ describe('AuthService security flows', () => {
     ).toHaveBeenCalledWith('new.user@example.com', expect.any(String));
   });
 
+  it.each([
+    ['email', [{ email: 'new.user@example.com' }]],
+    ['username', [null, { username: 'new_user' }]],
+  ])(
+    'uses the same conflict response for an existing %s',
+    async (_field, results) => {
+      const context = buildService();
+      for (const result of results) {
+        context.userModel.findOne.mockReturnValueOnce({
+          exec: jest.fn().mockResolvedValue(result),
+        });
+      }
+
+      await expect(context.service.register(registerDto)).rejects.toThrow(
+        'No se pudo crear la cuenta con los datos indicados',
+      );
+    },
+  );
+
   it('resends verification only for an active unverified account', async () => {
     const context = buildService();
     context.userModel.findOne.mockReturnValue({

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -192,7 +193,7 @@ export class BillingPeriodsService {
 
     if (method.ownerType === PaymentMethodOwnerType.USER) {
       if (method.userId?.toString() !== userId) {
-        throw new BadRequestException(
+        throw new ForbiddenException(
           'No tenés permiso para confirmar este período',
         );
       }

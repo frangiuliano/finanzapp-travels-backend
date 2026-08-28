@@ -525,7 +525,7 @@ export class PaymentMethodsService implements OnModuleInit {
   ): Promise<void> {
     if (method.ownerType === PaymentMethodOwnerType.USER) {
       if (method.userId?.toString() !== userId) {
-        throw new BadRequestException(
+        throw new ForbiddenException(
           'No tienes permiso para acceder a este medio de pago',
         );
       }
@@ -548,7 +548,7 @@ export class PaymentMethodsService implements OnModuleInit {
   ): Promise<void> {
     if (method.ownerType === PaymentMethodOwnerType.USER) {
       if (method.userId?.toString() !== userId) {
-        throw new BadRequestException(
+        throw new ForbiddenException(
           'No tienes permiso para modificar este medio de pago',
         );
       }
