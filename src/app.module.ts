@@ -24,12 +24,17 @@ import { ForecastModule } from './forecast/forecast.module';
 import { InAppNotificationsModule } from './in-app-notifications/in-app-notifications.module';
 import { BillingPeriodsModule } from './billing-periods/billing-periods.module';
 import { WealthModule } from './wealth/wealth.module';
+import { environmentValidationSchema } from './config/env.validation';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      validationSchema: environmentValidationSchema,
+      validationOptions: {
+        abortEarly: false,
+      },
     }),
     ThrottlerModule.forRoot([
       {
