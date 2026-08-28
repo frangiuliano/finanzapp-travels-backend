@@ -1,4 +1,5 @@
 import * as Joi from 'joi';
+import * as ms from 'ms';
 
 const optionalString = Joi.string().trim().empty('').optional();
 const optionalHttpUrl = Joi.string()
@@ -6,6 +7,18 @@ const optionalHttpUrl = Joi.string()
   .empty('')
   .uri({ scheme: ['http', 'https'] })
   .optional();
+const duration = Joi.string()
+  .trim()
+  .custom((value: string, helpers) => {
+    const milliseconds = ms(value as ms.StringValue);
+    return Number.isFinite(milliseconds) && milliseconds > 0
+      ? value
+      : helpers.error('duration.positive');
+  })
+  .messages({
+    'duration.positive':
+      '{{#label}} must be a positive duration such as 15m or 7d',
+  });
 
 export const environmentValidationSchema = Joi.object({
   NODE_ENV: Joi.string()
@@ -25,8 +38,8 @@ export const environmentValidationSchema = Joi.object({
     .messages({
       'any.invalid': 'JWT_REFRESH_SECRET must be different from JWT_SECRET',
     }),
-  JWT_EXPIRES_IN: optionalString,
-  JWT_REFRESH_EXPIRES_IN: optionalString,
+  JWT_EXPIRES_IN: duration.default('1h'),
+  JWT_REFRESH_EXPIRES_IN: duration.default('30d'),
 
   FRONTEND_URL: Joi.when('NODE_ENV', {
     is: 'production',

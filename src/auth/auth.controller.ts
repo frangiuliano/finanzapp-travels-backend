@@ -30,20 +30,11 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Public } from './decorators/public.decorator';
 import { GetUser } from './decorators/get-user.decorator';
 import { UserDocument } from '../users/user.schema';
-
-const getRefreshTokenCookieOptions = (): {
-  httpOnly: boolean;
-  secure: boolean;
-  sameSite: 'lax' | 'none';
-  maxAge: number;
-  path: string;
-} => ({
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-  maxAge: 30 * 24 * 60 * 60 * 1000,
-  path: '/',
-});
+import {
+  getLegacyRefreshTokenClearCookieOptions,
+  getRefreshTokenClearCookieOptions,
+  getRefreshTokenCookieOptions,
+} from './refresh-token-cookie';
 
 @Controller('auth')
 export class AuthController {
@@ -76,10 +67,11 @@ export class AuthController {
   ) {
     const result = await this.authService.login(loginDto);
 
+    this.clearLegacyRefreshTokenCookie(res);
     res.cookie(
       'refreshToken',
       result.refreshToken,
-      getRefreshTokenCookieOptions(),
+      getRefreshTokenCookieOptions(this.configService),
     );
 
     return {
@@ -105,10 +97,11 @@ export class AuthController {
 
     const result = await this.authService.refreshToken(refreshToken);
 
+    this.clearLegacyRefreshTokenCookie(res);
     res.cookie(
       'refreshToken',
       result.refreshToken,
-      getRefreshTokenCookieOptions(),
+      getRefreshTokenCookieOptions(this.configService),
     );
 
     return {
@@ -193,7 +186,11 @@ export class AuthController {
       await this.authService.logout(user._id.toString(), refreshToken);
     }
 
-    res.clearCookie('refreshToken', getRefreshTokenCookieOptions());
+    res.clearCookie(
+      'refreshToken',
+      getRefreshTokenClearCookieOptions(this.configService),
+    );
+    this.clearLegacyRefreshTokenCookie(res);
 
     return { message: 'Sesión cerrada exitosamente' };
   }
@@ -227,7 +224,11 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     await this.authService.confirmEmailChange(dto.token);
-    res.clearCookie('refreshToken', getRefreshTokenCookieOptions());
+    res.clearCookie(
+      'refreshToken',
+      getRefreshTokenClearCookieOptions(this.configService),
+    );
+    this.clearLegacyRefreshTokenCookie(res);
     return {
       message: 'Email actualizado. Inicia sesión nuevamente.',
     };
@@ -251,6 +252,13 @@ export class AuthController {
     return this.authService.updatePreferences(
       user._id.toString(),
       updatePreferencesDto,
+    );
+  }
+
+  private clearLegacyRefreshTokenCookie(res: Response): void {
+    res.clearCookie(
+      'refreshToken',
+      getLegacyRefreshTokenClearCookieOptions(this.configService),
     );
   }
 }

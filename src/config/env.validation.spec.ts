@@ -54,6 +54,15 @@ describe('environmentValidationSchema', () => {
     );
   });
 
+  it('rejects invalid token durations during startup validation', () => {
+    const { error } = environmentValidationSchema.validate({
+      ...validBaseEnvironment,
+      JWT_REFRESH_EXPIRES_IN: 'someday',
+    });
+
+    expect(error?.message).toContain('must be a positive duration');
+  });
+
   it('requires HTTPS frontend and public URLs in production', () => {
     const { error } = environmentValidationSchema.validate(
       {
