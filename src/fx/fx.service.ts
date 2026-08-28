@@ -14,6 +14,10 @@ import {
   type ArgentinaFxCasa,
 } from './argentina-fx.constants';
 import { toSafeErrorMessage } from '../common/utils/log-redaction.util';
+import {
+  externalRequestSignal,
+  isExternalRequestTimeout,
+} from '../common/utils/external-request.util';
 
 export interface FxSnapshot {
   fxRateToBoardCurrency: number;
@@ -228,8 +232,11 @@ export class FxService {
 
     let response: Response;
     try {
-      response = await fetch(url);
+      response = await fetch(url, { signal: externalRequestSignal() });
     } catch (error) {
+      if (isExternalRequestTimeout(error)) {
+        throw new ServiceUnavailableException('DolarApi no respondió a tiempo');
+      }
       this.logger.error(
         `DolarApi request failed for casa ${this.argentinaCasa}`,
         toSafeErrorMessage(error),
@@ -268,8 +275,13 @@ export class FxService {
 
     let response: Response;
     try {
-      response = await fetch(url);
+      response = await fetch(url, { signal: externalRequestSignal() });
     } catch (error) {
+      if (isExternalRequestTimeout(error)) {
+        throw new ServiceUnavailableException(
+          'ArgentinaDatos no respondió a tiempo',
+        );
+      }
       this.logger.error(
         `ArgentinaDatos request failed for ${this.argentinaCasa} on ${isoDate}`,
         toSafeErrorMessage(error),
@@ -331,8 +343,13 @@ export class FxService {
 
     let response: Response;
     try {
-      response = await fetch(url);
+      response = await fetch(url, { signal: externalRequestSignal() });
     } catch (error) {
+      if (isExternalRequestTimeout(error)) {
+        throw new ServiceUnavailableException(
+          'El proveedor de tipos de cambio no respondió a tiempo',
+        );
+      }
       this.logger.error(
         `FX historical request failed for ${fromCurrency}->${toCurrency} on ${date}`,
         toSafeErrorMessage(error),
@@ -388,8 +405,13 @@ export class FxService {
 
     let response: Response;
     try {
-      response = await fetch(url);
+      response = await fetch(url, { signal: externalRequestSignal() });
     } catch (error) {
+      if (isExternalRequestTimeout(error)) {
+        throw new ServiceUnavailableException(
+          'El proveedor de tipos de cambio no respondió a tiempo',
+        );
+      }
       this.logger.error(
         `FX provider request failed for ${fromCurrency}->${toCurrency}`,
         toSafeErrorMessage(error),

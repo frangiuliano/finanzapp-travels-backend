@@ -2,6 +2,10 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqualStrings } from '../../common/utils/token-hash.util';
 import { toSafeErrorMessage } from '../../common/utils/log-redaction.util';
+import {
+  externalRequestSignal,
+  isExternalRequestTimeout,
+} from '../../common/utils/external-request.util';
 
 interface TelegramApiError {
   ok: boolean;
@@ -57,6 +61,7 @@ export class TelegramClientService implements OnModuleInit {
     try {
       const response = await fetch(`${this.telegramApiUrl}/setWebhook`, {
         method: 'POST',
+        signal: externalRequestSignal(),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: webhookUrl,
@@ -75,6 +80,12 @@ export class TelegramClientService implements OnModuleInit {
         this.logger.error(`❌ Error configurando webhook: ${data.description}`);
       }
     } catch (error) {
+      if (isExternalRequestTimeout(error)) {
+        this.logger.warn(
+          'Telegram no respondió a tiempo al configurar webhook',
+        );
+        return;
+      }
       this.logger.error(
         'Error configurando webhook',
         toSafeErrorMessage(error),
@@ -111,6 +122,7 @@ export class TelegramClientService implements OnModuleInit {
     try {
       const response = await fetch(`${this.telegramApiUrl}/sendMessage`, {
         method: 'POST',
+        signal: externalRequestSignal(),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
@@ -126,6 +138,10 @@ export class TelegramClientService implements OnModuleInit {
         );
       }
     } catch (error) {
+      if (isExternalRequestTimeout(error)) {
+        this.logger.warn('Telegram no respondió a tiempo en sendMessage');
+        return;
+      }
       this.logger.error('Error en sendMessage', toSafeErrorMessage(error));
     }
   }
@@ -148,6 +164,7 @@ export class TelegramClientService implements OnModuleInit {
 
       const response = await fetch(`${this.telegramApiUrl}/sendMessage`, {
         method: 'POST',
+        signal: externalRequestSignal(),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
@@ -166,6 +183,12 @@ export class TelegramClientService implements OnModuleInit {
         );
       }
     } catch (error) {
+      if (isExternalRequestTimeout(error)) {
+        this.logger.warn(
+          'Telegram no respondió a tiempo en sendMessageWithButtons',
+        );
+        return;
+      }
       this.logger.error(
         'Error en sendMessageWithButtons',
         toSafeErrorMessage(error),
@@ -179,6 +202,7 @@ export class TelegramClientService implements OnModuleInit {
     try {
       await fetch(`${this.telegramApiUrl}/answerCallbackQuery`, {
         method: 'POST',
+        signal: externalRequestSignal(),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           callback_query_id: queryId,
@@ -186,6 +210,12 @@ export class TelegramClientService implements OnModuleInit {
         }),
       });
     } catch (error) {
+      if (isExternalRequestTimeout(error)) {
+        this.logger.warn(
+          'Telegram no respondió a tiempo en answerCallbackQuery',
+        );
+        return;
+      }
       this.logger.error(
         'Error en answerCallbackQuery',
         toSafeErrorMessage(error),

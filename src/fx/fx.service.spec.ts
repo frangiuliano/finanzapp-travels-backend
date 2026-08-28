@@ -1,10 +1,21 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { FxService } from './fx.service';
 
 describe('FxService', () => {
   const originalFetch = global.fetch;
+
+  function expectFetchWithSignal(expectedUrl: string): void {
+    const fetchMock = jest.mocked(global.fetch);
+    const [url, init] = fetchMock.mock.calls[0];
+
+    expect(url).toBe(expectedUrl);
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  }
 
   afterEach(() => {
     global.fetch = originalFetch;
@@ -59,9 +70,7 @@ describe('FxService', () => {
     const snapshot = await service.resolveSnapshot('USD', 'ARS');
 
     expect(snapshot.fxRateToBoardCurrency).toBe(1250.5);
-    expect(global.fetch).toHaveBeenCalledWith(
-      'https://dolarapi.com/v1/dolares/oficial',
-    );
+    expectFetchWithSignal('https://dolarapi.com/v1/dolares/oficial');
   });
 
   it('fetches historical USD/ARS from ArgentinaDatos', async () => {
@@ -83,7 +92,7 @@ describe('FxService', () => {
     );
 
     expect(snapshot.fxRateToBoardCurrency).toBe(1180);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expectFetchWithSignal(
       'https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/2026/02/14',
     );
   });
@@ -110,7 +119,7 @@ describe('FxService', () => {
     const snapshot = await service.resolveSnapshot('EUR', 'ARS');
 
     expect(snapshot.fxRateToBoardCurrency).toBe(1150.5);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expectFetchWithSignal(
       'https://v6.exchangerate-api.com/v6/test-key/pair/EUR/ARS',
     );
   });
@@ -134,5 +143,18 @@ describe('FxService', () => {
   it('isProviderEnabled returns true without API key', async () => {
     const service = await createService();
     expect(service.isProviderEnabled()).toBe(true);
+  });
+
+  it('returns service unavailable with a clear message on provider timeout', async () => {
+    const timeout = new Error('timed out');
+    timeout.name = 'TimeoutError';
+    global.fetch = jest
+      .fn()
+      .mockRejectedValue(timeout) as unknown as typeof fetch;
+    const service = await createService();
+
+    await expect(service.resolveSnapshot('USD', 'ARS')).rejects.toThrow(
+      new ServiceUnavailableException('DolarApi no respondió a tiempo'),
+    );
   });
 });
