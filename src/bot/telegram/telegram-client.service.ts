@@ -102,11 +102,12 @@ export class TelegramClientService implements OnModuleInit {
   }
 
   private getWebhookUrl(): string | null {
-    if (process.env.WEBHOOK_URL) {
-      return process.env.WEBHOOK_URL;
+    const configuredWebhookUrl = this.configService.get<string>('WEBHOOK_URL');
+    if (configuredWebhookUrl) {
+      return configuredWebhookUrl;
     }
 
-    if (process.env.NODE_ENV === 'production') {
+    if (this.configService.get<string>('NODE_ENV') === 'production') {
       return 'https://finanzapp-travels-backend.fly.dev/api/bot/webhook';
     }
 

@@ -3,10 +3,12 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import * as cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import { ConfigService } from '@nestjs/config';
 import { ParseMongoIdPipe } from './common/pipes/parse-mongo-id.pipe';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const configService = app.get(ConfigService);
 
   app.use(helmet());
 
@@ -22,7 +24,7 @@ async function bootstrap() {
     }),
   );
 
-  const frontendUrl = process.env.FRONTEND_URL;
+  const frontendUrl = configService.get<string>('FRONTEND_URL');
   const defaultOrigins = ['http://localhost:5173', 'http://localhost:3000'];
   const allowedOrigins = frontendUrl
     ? [...defaultOrigins, frontendUrl]
@@ -73,6 +75,6 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
   app.use(cookieParser());
 
-  await app.listen(process.env.PORT ?? 8080);
+  await app.listen(configService.get<number>('PORT', 8080));
 }
 void bootstrap();
