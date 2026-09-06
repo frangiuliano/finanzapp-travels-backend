@@ -24,6 +24,7 @@ import { ForecastModule } from './forecast/forecast.module';
 import { InAppNotificationsModule } from './in-app-notifications/in-app-notifications.module';
 import { BillingPeriodsModule } from './billing-periods/billing-periods.module';
 import { WealthModule } from './wealth/wealth.module';
+import { StatementImportsModule } from './statement-imports/statement-imports.module';
 import { environmentValidationSchema } from './config/env.validation';
 
 @Module({
@@ -73,6 +74,7 @@ import { environmentValidationSchema } from './config/env.validation';
     InAppNotificationsModule,
     BillingPeriodsModule,
     WealthModule,
+    StatementImportsModule,
   ],
   controllers: [AppController],
   providers: [

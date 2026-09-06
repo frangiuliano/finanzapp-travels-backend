@@ -16,6 +16,7 @@ const MONGO_ID_PARAM_NAMES = new Set([
   'holdingId',
   'positionId',
   'transactionId',
+  'importId',
 ]);
 
 @Injectable()
