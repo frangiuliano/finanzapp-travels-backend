@@ -59,6 +59,19 @@ export class BillingPeriodsController {
     return { pending };
   }
 
+  @Get('status')
+  async getStatus(
+    @Query('paymentMethodId') paymentMethodId: string,
+    @GetUser() user: UserDocument,
+  ) {
+    const pendingConfirmation =
+      await this.billingPeriodsService.hasUnconfirmedClosedCycle(
+        paymentMethodId,
+        user._id.toString(),
+      );
+    return { pendingConfirmation };
+  }
+
   @Post('confirm')
   @HttpCode(HttpStatus.OK)
   async confirm(

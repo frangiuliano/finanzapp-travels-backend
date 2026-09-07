@@ -342,6 +342,65 @@ export class BillingPeriodsService {
     return period.toObject();
   }
 
+  /**
+   * The most recently closed cycle (per the estimated closingDay) that has
+   * no confirmed BillingPeriod picking up right after it. Returns null when
+   * the last closed cycle is already covered by a confirmed period, or when
+   * no cycle has closed yet.
+   */
+  private async findUnconfirmedClosedCycle(
+    paymentMethodId: string,
+    closingDay: number,
+    today: Date,
+  ): Promise<{ cycleLabel: string; closedOn: string } | null> {
+    const recentCycles = listRecentCycleLabels(closingDay, 6, today);
+
+    for (const cycleLabel of recentCycles) {
+      if (!isCycleClosed(cycleLabel, closingDay, today)) {
+        continue;
+      }
+
+      const existing = await this.findConfirmedPeriod(
+        paymentMethodId,
+        cycleLabel,
+      );
+      const estimated = getCreditCycleRange(cycleLabel, closingDay);
+      const closedOn = existing?.periodTo ?? estimated.periodToInclusive;
+      const nextFrom = addUtcDay(closedOn);
+      const nextExists = await this.billingPeriodModel.exists({
+        paymentMethodId: new Types.ObjectId(paymentMethodId),
+        periodFrom: nextFrom,
+      });
+      if (nextExists) return null;
+
+      return { cycleLabel, closedOn };
+    }
+
+    return null;
+  }
+
+  async hasUnconfirmedClosedCycle(
+    paymentMethodId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const method = await this.paymentMethodsService.findOne(
+      paymentMethodId,
+      userId,
+    );
+
+    if (method.kind !== PaymentMethodKind.CREDIT || method.closingDay == null) {
+      return false;
+    }
+
+    const pending = await this.findUnconfirmedClosedCycle(
+      paymentMethodId,
+      method.closingDay,
+      new Date(),
+    );
+
+    return pending !== null;
+  }
+
   async syncNotificationsForUser(userId: string): Promise<void> {
     const methods =
       await this.paymentMethodsService.findAccessibleCreditMethods(userId);
@@ -358,41 +417,27 @@ export class BillingPeriodsService {
       );
       const closingDay = method.closingDay!;
 
-      const recentCycles = listRecentCycleLabels(closingDay, 6, today);
-
-      for (const cycleLabel of recentCycles) {
-        if (!isCycleClosed(cycleLabel, closingDay, today)) {
-          continue;
-        }
-
-        const existing = await this.findConfirmedPeriod(
-          paymentMethodId,
-          cycleLabel,
-        );
-        const estimated = getCreditCycleRange(cycleLabel, closingDay);
-        const closedOn = existing?.periodTo ?? estimated.periodToInclusive;
-        const nextFrom = addUtcDay(closedOn);
-        const nextExists = await this.billingPeriodModel.exists({
-          paymentMethodId: new Types.ObjectId(paymentMethodId),
-          periodFrom: nextFrom,
-        });
-        if (nextExists) break;
-
-        await this.notificationsService.createIfNotExists({
-          userId,
-          type: InAppNotificationType.BILLING_PERIOD_CONFIRMATION,
-          title: `Informá el próximo cierre de ${method.name}`,
-          body: `El ciclo cerró el ${closedOn}. Elegí la fecha del próximo cierre para calcular el nuevo período.`,
-          payload: {
-            paymentMethodId,
-            cycleLabel,
-            paymentMethodName: method.name,
-          },
-          actionPath: `/billing-periods/confirm?paymentMethodId=${paymentMethodId}&mode=next`,
-        });
-
-        break;
+      const pending = await this.findUnconfirmedClosedCycle(
+        paymentMethodId,
+        closingDay,
+        today,
+      );
+      if (!pending) {
+        continue;
       }
+
+      await this.notificationsService.createIfNotExists({
+        userId,
+        type: InAppNotificationType.BILLING_PERIOD_CONFIRMATION,
+        title: `Informá el próximo cierre de ${method.name}`,
+        body: `El ciclo cerró el ${pending.closedOn}. Elegí la fecha del próximo cierre para calcular el nuevo período.`,
+        payload: {
+          paymentMethodId,
+          cycleLabel: pending.cycleLabel,
+          paymentMethodName: method.name,
+        },
+        actionPath: `/billing-periods/confirm?paymentMethodId=${paymentMethodId}&mode=next`,
+      });
     }
   }
 }

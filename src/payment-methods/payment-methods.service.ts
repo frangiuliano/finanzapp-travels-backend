@@ -346,7 +346,9 @@ export class PaymentMethodsService implements OnModuleInit {
         userId: { $in: participantUserIds },
         isActive: true,
       })
-      .select('_id ownerType kind name lastFourDigits isActive userId')
+      .select(
+        '_id ownerType kind name institution lastFourDigits brand closingDay dueDay isActive isDefault userId',
+      )
       .populate('userId', '_id firstName lastName')
       .sort({ kind: 1, name: 1 })
       .lean();
