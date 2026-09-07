@@ -84,6 +84,8 @@ export class StatementImportsController {
           .length,
         lowConfidenceDocument: session.lowConfidenceDocument,
       },
+      periodFrom: session.periodFrom,
+      periodTo: session.periodTo,
     };
   }
 

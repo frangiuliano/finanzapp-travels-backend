@@ -75,6 +75,17 @@ export class StatementImportSession {
   @Prop({ default: false })
   lowConfidenceDocument: boolean;
 
+  /**
+   * Union of the parsed lines' own date range and the card's confirmed
+   * billing cycle overlapping it (if any) — the window the frontend uses
+   * to show already-loaded expenses for reconciliation.
+   */
+  @Prop({ required: true, match: /^\d{4}-\d{2}-\d{2}$/ })
+  periodFrom: string;
+
+  @Prop({ required: true, match: /^\d{4}-\d{2}-\d{2}$/ })
+  periodTo: string;
+
   /** TTL: pending imports the user never confirms are cleaned up automatically. */
   @Prop({ default: Date.now, expires: 60 * 60 })
   expiresAt: Date;

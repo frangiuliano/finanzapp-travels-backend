@@ -9,6 +9,7 @@ import {
 import { StatementLlmFallbackService } from './parsing/statement-llm-fallback.service';
 import { ExpensesModule } from '../expenses/expenses.module';
 import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
+import { BillingPeriodsModule } from '../billing-periods/billing-periods.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PaymentMethodsModule } from '../payment-methods/payment-methods.module'
     ]),
     ExpensesModule,
     PaymentMethodsModule,
+    BillingPeriodsModule,
   ],
   controllers: [StatementImportsController],
   providers: [StatementImportsService, StatementLlmFallbackService],

@@ -27,9 +27,10 @@ import {
   parseStatementText,
 } from './parsing/generic-statement-parser';
 import { StatementLlmFallbackService } from './parsing/statement-llm-fallback.service';
-import { findPossibleDuplicate } from './parsing/duplicate-matcher';
+import { matchStatementLines } from './parsing/duplicate-matcher';
 import { ConfirmStatementImportDto } from './dto/confirm-statement-import.dto';
 import { toSafeErrorMessage } from '../common/utils/log-redaction.util';
+import { BillingPeriodsService } from '../billing-periods/billing-periods.service';
 
 const LLM_FALLBACK_CONFIDENCE_THRESHOLD = 0.5;
 const DUPLICATE_LOOKUP_WINDOW_DAYS = 3;
@@ -52,6 +53,7 @@ export class StatementImportsService {
     private paymentMethodsService: PaymentMethodsService,
     private expensesService: ExpensesService,
     private llmFallback: StatementLlmFallbackService,
+    private billingPeriodsService: BillingPeriodsService,
   ) {}
 
   async processUpload(
@@ -63,6 +65,8 @@ export class StatementImportsService {
     importId: string;
     lines: StatementImportLine[];
     stats: StatementImportStats;
+    periodFrom: string;
+    periodTo: string;
   }> {
     const availableMethods =
       await this.paymentMethodsService.findAvailableForBoard(boardId, userId);
@@ -97,10 +101,17 @@ export class StatementImportsService {
       }
     }
 
+    const { periodFrom, periodTo } = await this.computePeriodRange(
+      paymentMethodId,
+      resolvedLines,
+    );
+
     const linesWithDuplicates = await this.markPossibleDuplicates(
       resolvedLines,
       boardId,
       paymentMethodId,
+      periodFrom,
+      periodTo,
     );
 
     const session = await this.sessionModel.create({
@@ -109,6 +120,8 @@ export class StatementImportsService {
       paymentMethodId: new Types.ObjectId(paymentMethodId),
       lines: linesWithDuplicates,
       lowConfidenceDocument: parsed.lowConfidenceDocument,
+      periodFrom,
+      periodTo,
     });
 
     return {
@@ -120,6 +133,48 @@ export class StatementImportsService {
           .length,
         lowConfidenceDocument: session.lowConfidenceDocument,
       },
+      periodFrom: session.periodFrom,
+      periodTo: session.periodTo,
+    };
+  }
+
+  /**
+   * Union of the parsed statement's own date range and the card's
+   * confirmed billing cycle overlapping it (if any) — always at least as
+   * wide as what the PDF itself contains, never narrower.
+   */
+  private async computePeriodRange(
+    paymentMethodId: string,
+    lines: ParsedStatementLine[],
+  ): Promise<{ periodFrom: string; periodTo: string }> {
+    if (lines.length === 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      return { periodFrom: today, periodTo: today };
+    }
+
+    const dates = lines.map((line) => line.date).sort();
+    const parsedMinDate = dates[0];
+    const parsedMaxDate = dates[dates.length - 1];
+
+    const overlappingCycle = await this.billingPeriodsService.findOverlapping(
+      paymentMethodId,
+      parsedMinDate,
+      parsedMaxDate,
+    );
+
+    if (!overlappingCycle) {
+      return { periodFrom: parsedMinDate, periodTo: parsedMaxDate };
+    }
+
+    return {
+      periodFrom:
+        overlappingCycle.periodFrom < parsedMinDate
+          ? overlappingCycle.periodFrom
+          : parsedMinDate,
+      periodTo:
+        overlappingCycle.periodTo > parsedMaxDate
+          ? overlappingCycle.periodTo
+          : parsedMaxDate,
     };
   }
 
@@ -205,16 +260,17 @@ export class StatementImportsService {
     lines: ParsedStatementLine[],
     boardId: string,
     paymentMethodId: string,
+    periodFrom: string,
+    periodTo: string,
   ): Promise<StatementImportLine[]> {
     if (lines.length === 0) return [];
 
-    const dates = lines.map((line) => new Date(`${line.date}T00:00:00.000Z`));
     const minDate = new Date(
-      Math.min(...dates.map((d) => d.getTime())) -
+      new Date(`${periodFrom}T00:00:00.000Z`).getTime() -
         DUPLICATE_LOOKUP_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     );
     const maxDate = new Date(
-      Math.max(...dates.map((d) => d.getTime())) +
+      new Date(`${periodTo}T00:00:00.000Z`).getTime() +
         DUPLICATE_LOOKUP_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     );
 
@@ -235,8 +291,10 @@ export class StatementImportsService {
       expenseDate: expense.expenseDate,
     }));
 
-    return lines.map((line) => {
-      const duplicate = findPossibleDuplicate(line, candidateExpenses);
+    const matches = matchStatementLines(lines, candidateExpenses);
+
+    return lines.map((line, index) => {
+      const match = matches[index];
       return {
         tempId: uuidv4(),
         date: line.date,
@@ -247,13 +305,13 @@ export class StatementImportsService {
         cuotaTotal: line.cuotaTotal,
         confidence: line.confidence,
         parsedVia: line.parsedVia ?? StatementLineSource.REGEX,
-        isPossibleDuplicate: duplicate !== null,
-        duplicateOfExpenseId: duplicate
-          ? new Types.ObjectId(duplicate.id)
+        isPossibleDuplicate: match !== null,
+        duplicateOfExpenseId: match
+          ? new Types.ObjectId(match.expenseId)
           : undefined,
-        duplicateOfDescription: duplicate?.description,
-        duplicateOfAmount: duplicate?.amount,
-        duplicateOfDate: duplicate?.expenseDate.toISOString().slice(0, 10),
+        duplicateOfDescription: match?.description,
+        duplicateOfAmount: match?.amount,
+        duplicateOfDate: match?.expenseDate.toISOString().slice(0, 10),
         rawText: line.rawText,
       } as StatementImportLine;
     });

@@ -83,6 +83,25 @@ export class BillingPeriodsService {
       .lean();
   }
 
+  /**
+   * Finds a confirmed period overlapping a date range (both `YYYY-MM-DD`).
+   * Used by statement import to widen its "already loaded expenses"
+   * window to the card's real billing cycle when one is confirmed.
+   */
+  async findOverlapping(
+    paymentMethodId: string,
+    fromDate: string,
+    toDate: string,
+  ): Promise<BillingPeriod | null> {
+    return this.billingPeriodModel
+      .findOne({
+        paymentMethodId: new Types.ObjectId(paymentMethodId),
+        periodFrom: { $lte: toDate },
+        periodTo: { $gte: fromDate },
+      })
+      .lean();
+  }
+
   async getPendingConfirmation(
     paymentMethodId: string,
     cycleLabel: string,
