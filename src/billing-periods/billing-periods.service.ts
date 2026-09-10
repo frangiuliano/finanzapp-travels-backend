@@ -354,29 +354,31 @@ export class BillingPeriodsService {
     today: Date,
   ): Promise<{ cycleLabel: string; closedOn: string } | null> {
     const recentCycles = listRecentCycleLabels(closingDay, 6, today);
+    const latestClosedCycle = recentCycles.find((cycleLabel) =>
+      isCycleClosed(cycleLabel, closingDay, today),
+    );
+    if (!latestClosedCycle) return null;
 
-    for (const cycleLabel of recentCycles) {
-      if (!isCycleClosed(cycleLabel, closingDay, today)) {
-        continue;
-      }
+    const estimated = getCreditCycleRange(latestClosedCycle, closingDay);
+    const latestConfirmed = await this.billingPeriodModel
+      .findOne({ paymentMethodId: new Types.ObjectId(paymentMethodId) })
+      .sort({ periodTo: -1 })
+      .lean();
 
-      const existing = await this.findConfirmedPeriod(
-        paymentMethodId,
-        cycleLabel,
-      );
-      const estimated = getCreditCycleRange(cycleLabel, closingDay);
-      const closedOn = existing?.periodTo ?? estimated.periodToInclusive;
-      const nextFrom = addUtcDay(closedOn);
-      const nextExists = await this.billingPeriodModel.exists({
-        paymentMethodId: new Types.ObjectId(paymentMethodId),
-        periodFrom: nextFrom,
-      });
-      if (nextExists) return null;
-
-      return { cycleLabel, closedOn };
+    // Real statement dates can differ from the configured closing day. A
+    // confirmed period whose end reaches or passes the latest estimated close
+    // already covers it, even when its cycleLabel belongs to the next month.
+    if (
+      latestConfirmed?.periodTo &&
+      latestConfirmed.periodTo >= estimated.periodToInclusive
+    ) {
+      return null;
     }
 
-    return null;
+    return {
+      cycleLabel: latestClosedCycle,
+      closedOn: estimated.periodToInclusive,
+    };
   }
 
   async hasUnconfirmedClosedCycle(
