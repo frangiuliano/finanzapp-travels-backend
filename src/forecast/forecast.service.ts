@@ -47,6 +47,7 @@ export interface ForecastLineItem {
     installmentNumber?: number;
     totalInstallments?: number;
     daysOfMonth?: number[];
+    paymentMethodId?: string;
     originalAmount?: number;
     originalCurrency?: string;
   };
@@ -280,6 +281,7 @@ export class ForecastService {
         meta: {
           installmentNumber: due.installmentNumber,
           totalInstallments: plan.totalInstallments,
+          paymentMethodId: plan.paymentMethodId?.toString(),
           originalAmount: due.amount,
           originalCurrency: plan.currency,
         },
