@@ -150,11 +150,6 @@ export class PaymentMethodsService implements OnModuleInit {
         institutionCode: institution.code,
         lastFourDigits: createDto.lastFourDigits,
         brand: createDto.brand,
-        closingDay: this.resolveClosingDay(
-          createDto.kind,
-          createDto.closingDay,
-        ),
-        dueDay: createDto.dueDay,
         isActive: true,
       });
 
@@ -177,8 +172,6 @@ export class PaymentMethodsService implements OnModuleInit {
       institutionCode: institution.code,
       lastFourDigits: createDto.lastFourDigits,
       brand: createDto.brand,
-      closingDay: this.resolveClosingDay(createDto.kind, createDto.closingDay),
-      dueDay: createDto.dueDay,
       isActive: true,
     });
 
@@ -201,28 +194,6 @@ export class PaymentMethodsService implements OnModuleInit {
     return this.paymentMethodModel
       .find(filter)
       .sort({ kind: 1, name: 1 })
-      .lean();
-  }
-
-  async findAccessibleCreditMethods(userId: string): Promise<PaymentMethod[]> {
-    const boardIds = await this.participantsService.findBoardIdsForUser(userId);
-
-    return this.paymentMethodModel
-      .find({
-        kind: PaymentMethodKind.CREDIT,
-        isActive: true,
-        $or: [
-          {
-            ownerType: PaymentMethodOwnerType.USER,
-            userId: new Types.ObjectId(userId),
-          },
-          {
-            ownerType: PaymentMethodOwnerType.BOARD,
-            tripId: { $in: boardIds },
-          },
-        ],
-      })
-      .sort({ name: 1 })
       .lean();
   }
 
@@ -347,7 +318,7 @@ export class PaymentMethodsService implements OnModuleInit {
         isActive: true,
       })
       .select(
-        '_id ownerType kind name institution lastFourDigits brand closingDay dueDay isActive isDefault userId',
+        '_id ownerType kind name institution lastFourDigits brand isActive isDefault userId',
       )
       .populate('userId', '_id firstName lastName')
       .sort({ kind: 1, name: 1 })
@@ -462,15 +433,6 @@ export class PaymentMethodsService implements OnModuleInit {
     if (updateDto.brand !== undefined) {
       method.brand = updateDto.brand;
     }
-    if (updateDto.closingDay !== undefined) {
-      method.closingDay = this.resolveClosingDay(
-        method.kind,
-        updateDto.closingDay,
-      );
-    }
-    if (updateDto.dueDay !== undefined) {
-      method.dueDay = updateDto.dueDay;
-    }
     if (updateDto.isActive !== undefined) {
       method.isActive = updateDto.isActive;
     }
@@ -572,27 +534,6 @@ export class PaymentMethodsService implements OnModuleInit {
     if (!allowed.includes(kind)) {
       throw new BadRequestException('kind debe ser debit o credit');
     }
-  }
-
-  private resolveClosingDay(
-    kind: PaymentMethodKind,
-    closingDay?: number,
-  ): number | undefined {
-    if (closingDay === undefined) {
-      return undefined;
-    }
-
-    if (kind !== PaymentMethodKind.CREDIT) {
-      throw new BadRequestException(
-        'closingDay solo aplica a medios de pago de crédito',
-      );
-    }
-
-    if (closingDay < 1 || closingDay > 31) {
-      throw new BadRequestException('closingDay debe estar entre 1 y 31');
-    }
-
-    return closingDay;
   }
 
   private extractParticipantUserIds(

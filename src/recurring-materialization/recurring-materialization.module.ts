@@ -26,7 +26,6 @@ import {
 import { ParticipantsModule } from '../participants/participants.module';
 import { FxModule } from '../fx/fx.module';
 import { BoardsModule } from '../trips/trips.module';
-import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
 
 @Module({
   imports: [
@@ -48,7 +47,6 @@ import { PaymentMethodsModule } from '../payment-methods/payment-methods.module'
     forwardRef(() => ParticipantsModule),
     FxModule,
     forwardRef(() => BoardsModule),
-    forwardRef(() => PaymentMethodsModule),
   ],
   providers: [RecurringMaterializationService],
   exports: [RecurringMaterializationService],

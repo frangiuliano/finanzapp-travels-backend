@@ -11,6 +11,8 @@ import {
   MaxLength,
   ValidateIf,
   IsInt,
+  IsArray,
+  Matches,
 } from 'class-validator';
 import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
 
@@ -74,4 +76,10 @@ export class CreateRecurringExpenseDto {
   @Min(1, { message: 'escalationFrequencyMonths debe ser al menos 1' })
   @Max(60, { message: 'escalationFrequencyMonths debe ser como máximo 60' })
   escalationFrequencyMonths?: number;
+
+  /** Months (YYYY-MM) unticked from the 12-month recurring checklist. */
+  @IsOptional()
+  @IsArray()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { each: true })
+  excludedYearMonths?: string[];
 }

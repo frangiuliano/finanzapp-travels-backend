@@ -3,9 +3,7 @@ import {
   IsIn,
   IsOptional,
   IsString,
-  Max,
   MaxLength,
-  Min,
   MinLength,
   Matches,
 } from 'class-validator';
@@ -47,16 +45,6 @@ export class UpdatePaymentMethodDto {
   @IsString({ message: 'La marca debe ser texto' })
   @MaxLength(50, { message: 'La marca no puede tener más de 50 caracteres' })
   brand?: string;
-
-  @IsOptional()
-  @Min(1, { message: 'closingDay debe estar entre 1 y 31' })
-  @Max(31, { message: 'closingDay debe estar entre 1 y 31' })
-  closingDay?: number;
-
-  @IsOptional()
-  @Min(1, { message: 'dueDay debe estar entre 1 y 31' })
-  @Max(31, { message: 'dueDay debe estar entre 1 y 31' })
-  dueDay?: number;
 
   @IsOptional()
   @IsBoolean({ message: 'isActive debe ser booleano' })

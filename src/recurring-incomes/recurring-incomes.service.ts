@@ -52,6 +52,7 @@ export class RecurringIncomesService {
       label: createDto.label.trim(),
       description: createDto.description?.trim(),
       daysOfMonth: normalizeDaysOfMonth(createDto.daysOfMonth),
+      excludedYearMonths: createDto.excludedYearMonths ?? [],
       createdBy: new Types.ObjectId(userId),
     });
 
@@ -154,9 +155,25 @@ export class RecurringIncomesService {
     }
     if (updateDto.isActive !== undefined) item.isActive = updateDto.isActive;
 
+    let newlyExcludedYearMonths: string[] = [];
+    if (updateDto.excludedYearMonths !== undefined) {
+      const previouslyExcluded = new Set(item.excludedYearMonths ?? []);
+      newlyExcludedYearMonths = updateDto.excludedYearMonths.filter(
+        (yearMonth) => !previouslyExcluded.has(yearMonth),
+      );
+      item.excludedYearMonths = updateDto.excludedYearMonths;
+    }
+
     const saved = await item.save();
 
     await this.materializationService.ensureHorizon(boardId, userId);
+
+    if (newlyExcludedYearMonths.length > 0) {
+      await this.materializationService.removePendingIncomeForExcludedMonths(
+        id,
+        newlyExcludedYearMonths,
+      );
+    }
 
     this.logger.log(`Recurring income updated: ${id}`);
     return saved;

@@ -73,6 +73,7 @@ export class RecurringExpensesService {
       escalationType: createDto.escalationType,
       escalationValue: createDto.escalationValue,
       escalationFrequencyMonths: createDto.escalationFrequencyMonths,
+      excludedYearMonths: createDto.excludedYearMonths ?? [],
       createdBy: new Types.ObjectId(userId),
     });
 
@@ -186,6 +187,15 @@ export class RecurringExpensesService {
     }
     if (updateDto.isActive !== undefined) item.isActive = updateDto.isActive;
 
+    let newlyExcludedYearMonths: string[] = [];
+    if (updateDto.excludedYearMonths !== undefined) {
+      const previouslyExcluded = new Set(item.excludedYearMonths ?? []);
+      newlyExcludedYearMonths = updateDto.excludedYearMonths.filter(
+        (yearMonth) => !previouslyExcluded.has(yearMonth),
+      );
+      item.excludedYearMonths = updateDto.excludedYearMonths;
+    }
+
     let escalationChanged = false;
     if (updateDto.disableEscalation) {
       escalationChanged =
@@ -220,6 +230,13 @@ export class RecurringExpensesService {
     const saved = await item.save();
 
     await this.materializationService.ensureHorizon(boardId, userId);
+
+    if (newlyExcludedYearMonths.length > 0) {
+      await this.materializationService.removePendingExpensesForExcludedMonths(
+        id,
+        newlyExcludedYearMonths,
+      );
+    }
 
     if (escalationChanged) {
       await this.materializationService.syncPendingExpenseAmountsFromMonth(

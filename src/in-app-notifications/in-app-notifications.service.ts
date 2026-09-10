@@ -4,17 +4,7 @@ import { Model, Types } from 'mongoose';
 import {
   InAppNotification,
   InAppNotificationDocument,
-  InAppNotificationType,
 } from './in-app-notification.schema';
-
-export interface CreateInAppNotificationInput {
-  userId: string;
-  type: InAppNotificationType;
-  title: string;
-  body: string;
-  payload?: Record<string, unknown>;
-  actionPath?: string;
-}
 
 @Injectable()
 export class InAppNotificationsService {
@@ -76,81 +66,5 @@ export class InAppNotificationsService {
     );
 
     return { updated: result.modifiedCount };
-  }
-
-  async createIfNotExists(
-    input: CreateInAppNotificationInput,
-  ): Promise<InAppNotification | null> {
-    const userId = new Types.ObjectId(input.userId);
-
-    if (
-      input.payload?.paymentMethodId &&
-      input.payload?.cycleLabel &&
-      input.type === InAppNotificationType.BILLING_PERIOD_CONFIRMATION
-    ) {
-      const existing = await this.notificationModel.findOne({
-        userId,
-        type: input.type,
-        'payload.paymentMethodId': input.payload.paymentMethodId,
-        'payload.cycleLabel': input.payload.cycleLabel,
-      });
-
-      if (existing) {
-        return existing.toObject();
-      }
-    }
-
-    try {
-      const created = await this.notificationModel.create({
-        userId,
-        type: input.type,
-        title: input.title,
-        body: input.body,
-        payload: input.payload,
-        actionPath: input.actionPath,
-        readAt: null,
-      });
-      return created.toObject();
-    } catch {
-      const existing = await this.notificationModel.findOne({
-        userId,
-        type: input.type,
-        'payload.paymentMethodId': input.payload?.paymentMethodId,
-        'payload.cycleLabel': input.payload?.cycleLabel,
-      });
-      return existing?.toObject() ?? null;
-    }
-  }
-
-  async markBillingPeriodNotificationsRead(
-    userId: string,
-    paymentMethodId: string,
-    cycleLabel: string,
-  ): Promise<void> {
-    await this.notificationModel.updateMany(
-      {
-        userId: new Types.ObjectId(userId),
-        type: InAppNotificationType.BILLING_PERIOD_CONFIRMATION,
-        'payload.paymentMethodId': paymentMethodId,
-        'payload.cycleLabel': cycleLabel,
-        readAt: null,
-      },
-      { readAt: new Date() },
-    );
-  }
-
-  async markBillingPeriodNotificationsReadForMethod(
-    userId: string,
-    paymentMethodId: string,
-  ): Promise<void> {
-    await this.notificationModel.updateMany(
-      {
-        userId: new Types.ObjectId(userId),
-        type: InAppNotificationType.BILLING_PERIOD_CONFIRMATION,
-        'payload.paymentMethodId': paymentMethodId,
-        readAt: null,
-      },
-      { readAt: new Date() },
-    );
   }
 }

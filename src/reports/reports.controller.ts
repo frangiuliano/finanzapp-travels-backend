@@ -39,32 +39,6 @@ export class ReportsController {
     return { report };
   }
 
-  @Get('board/credit-cycle')
-  async getCreditCycleReport(
-    @Query('boardId') boardId: string,
-    @Query('paymentMethodId') paymentMethodId: string,
-    @GetUser() user: UserDocument,
-    @Query('cycle') cycle = 'current',
-    @Query('tripId') tripId?: string,
-  ) {
-    const resolvedBoardId = boardId || tripId;
-    if (!resolvedBoardId) {
-      throw new BadRequestException('boardId o tripId es requerido');
-    }
-    if (!paymentMethodId) {
-      throw new BadRequestException('paymentMethodId es requerido');
-    }
-
-    const report = await this.reportsService.getCreditCycleReport(
-      resolvedBoardId,
-      paymentMethodId,
-      cycle,
-      user._id.toString(),
-    );
-
-    return { report };
-  }
-
   @Get('consolidated')
   async getConsolidatedReport(
     @Query('yearMonth') yearMonth: string,

@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { ForbiddenBoardAccessError, ReportsService } from './reports.service';
 import { Expense } from '../expenses/expense.schema';
@@ -12,8 +12,6 @@ import {
 } from '../payment-methods/payment-method.schema';
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
-import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
-import { BillingPeriodsService } from '../billing-periods/billing-periods.service';
 
 describe('ReportsService', () => {
   let service: ReportsService;
@@ -28,10 +26,6 @@ describe('ReportsService', () => {
   const categoryModel = { find: jest.fn() };
   const paymentMethodModel = { find: jest.fn() };
 
-  const paymentMethodsService = {
-    findAvailableForBoard: jest.fn(),
-  };
-
   const participantsService = {
     ensureParticipantAccess: jest.fn(),
   };
@@ -40,10 +34,6 @@ describe('ReportsService', () => {
     findByIdOrFail: jest.fn(),
     findAll: jest.fn(),
     findExpenseScopeContext: jest.fn(),
-  };
-
-  const billingPeriodsService = {
-    findConfirmedPeriod: jest.fn().mockResolvedValue(null),
   };
 
   beforeEach(async () => {
@@ -61,8 +51,6 @@ describe('ReportsService', () => {
         },
         { provide: ParticipantsService, useValue: participantsService },
         { provide: BoardsService, useValue: boardsService },
-        { provide: PaymentMethodsService, useValue: paymentMethodsService },
-        { provide: BillingPeriodsService, useValue: billingPeriodsService },
       ],
     }).compile();
 
@@ -201,104 +189,6 @@ describe('ReportsService', () => {
       await expect(
         service.getBoardCalendarReport(boardId.toString(), '2026-07', userId),
       ).rejects.toBeInstanceOf(ForbiddenException);
-    });
-  });
-
-  describe('getCreditCycleReport', () => {
-    it('should return closing_day_required when credit card has no closingDay', async () => {
-      paymentMethodsService.findAvailableForBoard.mockResolvedValue([
-        {
-          _id: paymentMethodId,
-          name: 'Visa',
-          kind: PaymentMethodKind.CREDIT,
-          closingDay: undefined,
-        },
-      ]);
-
-      const report = await service.getCreditCycleReport(
-        boardId.toString(),
-        paymentMethodId.toString(),
-        'current',
-        userId,
-      );
-
-      expect(report).toEqual({
-        status: 'closing_day_required',
-        boardId: boardId.toString(),
-        paymentMethodId: paymentMethodId.toString(),
-        paymentMethodName: 'Visa',
-        message:
-          'Configura el día de cierre de esta tarjeta para ver reportes por ciclo de facturación',
-      });
-    });
-
-    it('should return credit cycle totals for configured card', async () => {
-      paymentMethodsService.findAvailableForBoard.mockResolvedValue([
-        {
-          _id: paymentMethodId,
-          name: 'Visa',
-          kind: PaymentMethodKind.CREDIT,
-          closingDay: 14,
-        },
-      ]);
-
-      expenseModel.find.mockReturnValue({
-        lean: jest.fn().mockResolvedValue([
-          {
-            amount: 300,
-            currency: 'ARS',
-            expenseDate: new Date('2026-08-01T00:00:00.000Z'),
-          },
-        ]),
-      });
-
-      const report = await service.getCreditCycleReport(
-        boardId.toString(),
-        paymentMethodId.toString(),
-        '2026-08',
-        userId,
-      );
-
-      expect(report.status).toBe('ok');
-      if (report.status === 'ok') {
-        expect(report.totalExpenses).toBe(300);
-        expect(report.periodFrom).toBe('2026-07-15');
-        expect(report.periodToInclusive).toBe('2026-08-14');
-        expect(report.availableCycles).toHaveLength(12);
-      }
-    });
-
-    it('should reject non-credit payment methods', async () => {
-      paymentMethodsService.findAvailableForBoard.mockResolvedValue([
-        {
-          _id: paymentMethodId,
-          name: 'Efectivo',
-          kind: PaymentMethodKind.CASH,
-          closingDay: 14,
-        },
-      ]);
-
-      await expect(
-        service.getCreditCycleReport(
-          boardId.toString(),
-          paymentMethodId.toString(),
-          'current',
-          userId,
-        ),
-      ).rejects.toBeInstanceOf(BadRequestException);
-    });
-
-    it('should reject payment methods not available for the board', async () => {
-      paymentMethodsService.findAvailableForBoard.mockResolvedValue([]);
-
-      await expect(
-        service.getCreditCycleReport(
-          boardId.toString(),
-          paymentMethodId.toString(),
-          'current',
-          userId,
-        ),
-      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 

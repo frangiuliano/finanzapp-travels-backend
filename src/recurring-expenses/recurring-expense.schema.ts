@@ -34,6 +34,10 @@ export class RecurringExpense {
   @Prop({ required: false, match: /^\d{4}-(0[1-9]|1[0-2])$/ })
   inactiveFromYearMonth?: string;
 
+  /** Specific months (YYYY-MM) unticked from the recurring checklist — no occurrence is generated for these. */
+  @Prop({ type: [String], default: [] })
+  excludedYearMonths: string[];
+
   /** 'percent' = grows by escalationValue% every interval (compounded). 'fixed' = adds escalationValue every interval. */
   @Prop({ type: String, enum: ['percent', 'fixed'], required: false })
   escalationType?: 'percent' | 'fixed';

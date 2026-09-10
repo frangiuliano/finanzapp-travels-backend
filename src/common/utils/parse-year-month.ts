@@ -39,3 +39,12 @@ export function shiftYearMonth(yearMonth: string, deltaMonths: number): string {
   const date = new Date(Number(yearStr), Number(monthStr) - 1 + deltaMonths, 1);
   return getCurrentYearMonth(date);
 }
+
+export function monthsBetweenYearMonths(
+  fromYearMonth: string,
+  toYearMonth: string,
+): number {
+  const [fromYear, fromMonth] = fromYearMonth.split('-').map(Number);
+  const [toYear, toMonth] = toYearMonth.split('-').map(Number);
+  return (toYear - fromYear) * 12 + (toMonth - fromMonth);
+}

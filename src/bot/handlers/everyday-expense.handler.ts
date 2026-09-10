@@ -221,6 +221,7 @@ export class EverydayExpenseHandler {
           : PaymentMethod.CASH,
         isDivisible: false,
         expenseDate: new Date().toISOString(),
+        paymentYearMonth: new Date().toISOString().slice(0, 7),
       };
 
       await this.expensesService.create(

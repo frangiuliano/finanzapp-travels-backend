@@ -10,6 +10,7 @@ import {
   ArrayMinSize,
   IsInt,
   IsBoolean,
+  Matches,
 } from 'class-validator';
 import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
 
@@ -58,4 +59,10 @@ export class UpdateRecurringIncomeDto {
   @IsOptional()
   @IsString()
   cancelFromYearMonth?: string;
+
+  /** Months (YYYY-MM) unticked from the 12-month recurring checklist. */
+  @IsOptional()
+  @IsArray()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { each: true })
+  excludedYearMonths?: string[];
 }

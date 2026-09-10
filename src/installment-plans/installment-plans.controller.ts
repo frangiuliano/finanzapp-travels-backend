@@ -15,6 +15,7 @@ import {
 import { InstallmentPlansService } from './installment-plans.service';
 import { CreateInstallmentPlanDto } from './dto/create-installment-plan.dto';
 import { UpdateInstallmentPlanDto } from './dto/update-installment-plan.dto';
+import { RescheduleInstallmentDto } from './dto/reschedule-installment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { UserDocument } from '../users/user.schema';
@@ -75,14 +76,36 @@ export class InstallmentPlansController {
     @Body() updateDto: UpdateInstallmentPlanDto,
     @GetUser() user: UserDocument,
   ) {
-    const installmentPlan = await this.installmentPlansService.update(
+    const result = await this.installmentPlansService.update(
       id,
       updateDto,
       user._id.toString(),
     );
+    if (result.status === 'needs_decision') {
+      return result;
+    }
     return {
+      status: result.status,
       message: 'Plan de cuotas actualizado exitosamente',
-      installmentPlan,
+      installmentPlan: result.installmentPlan,
+      applied: result.applied,
+    };
+  }
+
+  @Patch(':id/reschedule')
+  async reschedule(
+    @Param('id') id: string,
+    @Body() rescheduleDto: RescheduleInstallmentDto,
+    @GetUser() user: UserDocument,
+  ) {
+    const result = await this.installmentPlansService.rescheduleInstallments(
+      id,
+      rescheduleDto,
+      user._id.toString(),
+    );
+    return {
+      message: 'Cuotas reprogramadas exitosamente',
+      ...result,
     };
   }
 

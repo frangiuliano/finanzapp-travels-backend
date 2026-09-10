@@ -49,12 +49,6 @@ export class PaymentMethod {
   @Prop({ maxlength: 50 })
   brand?: string;
 
-  @Prop({ min: 1, max: 31 })
-  closingDay?: number;
-
-  @Prop({ min: 1, max: 31 })
-  dueDay?: number;
-
   @Prop({ default: true })
   isActive: boolean;
 

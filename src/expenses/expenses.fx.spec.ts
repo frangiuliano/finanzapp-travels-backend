@@ -180,6 +180,7 @@ describe('ExpensesService FX snapshot', () => {
         amount: 10,
         currency: 'USD',
         description: 'Compra USD',
+        paymentYearMonth: '2026-07',
       },
       userId,
     );
@@ -230,6 +231,7 @@ describe('ExpensesService FX snapshot', () => {
         currency: 'USD',
         fxRateOverride: 999,
         description: 'Manual FX',
+        paymentYearMonth: '2026-07',
       },
       userId,
     );
@@ -265,6 +267,7 @@ describe('ExpensesService FX snapshot', () => {
           amount: 10,
           currency: 'USD',
           description: 'Sin FX',
+          paymentYearMonth: '2026-07',
         },
         userId,
       ),

@@ -67,9 +67,9 @@ export class Expense {
   })
   fxPurpose?: ExpenseFxPurpose;
 
-  /** Credit card closing-month label (YYYY-MM) when fxPolicy is credit_cycle */
+  /** Month (YYYY-MM) this expense counts toward — an explicit user choice, not derived from the expense date. */
   @Prop({ required: false, match: /^\d{4}-(0[1-9]|1[0-2])$/ })
-  billingCycleLabel?: string;
+  paymentYearMonth?: string;
 
   @Prop({ required: true, minlength: 3, maxlength: 500 })
   description: string;
@@ -156,15 +156,26 @@ export class Expense {
   @Prop({ type: Types.ObjectId, ref: 'RecurringExpense', required: false })
   recurringExpenseId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'InstallmentPlan', required: false })
+  installmentPlanId?: Types.ObjectId;
+
+  @Prop({ type: Number, required: false, min: 1 })
+  installmentNumber?: number;
+
   @Prop({ required: false })
   occurrenceKey?: string;
 
   @Prop({ type: Date, required: false })
   skippedAt?: Date;
 
-  /** User confirmed this expense's cycle assignment despite falling on the card's closing day. */
-  @Prop({ type: Boolean, required: false, default: false })
-  closingDayReviewed?: boolean;
+  /**
+   * Fields manually edited on this specific installment/recurring occurrence
+   * that diverge from its plan's defaults (e.g. ['amount', 'description']).
+   * Plan-level bulk edits must not silently overwrite these without explicit
+   * confirmation.
+   */
+  @Prop({ type: [String], required: false, default: [] })
+  overriddenFields?: string[];
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
@@ -199,6 +210,7 @@ ExpenseSchema.index({ expenseDate: -1 });
 ExpenseSchema.index({ cardId: 1 });
 ExpenseSchema.index({ categoryId: 1 });
 ExpenseSchema.index({ paymentMethodId: 1 });
+ExpenseSchema.index({ installmentPlanId: 1, installmentNumber: 1 });
 ExpenseSchema.index(
   { createdBy: 1, clientRequestId: 1 },
   {

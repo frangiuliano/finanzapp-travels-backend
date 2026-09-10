@@ -25,6 +25,9 @@ describe('ExpensesService category and payment methods', () => {
   const userId = new Types.ObjectId().toString();
 
   const expenseModel = {
+    collection: {
+      updateMany: jest.fn(),
+    },
     find: jest.fn(),
     findById: jest.fn(),
     updateOne: jest.fn(),
@@ -77,6 +80,7 @@ describe('ExpensesService category and payment methods', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    expenseModel.collection.updateMany.mockResolvedValue({ modifiedCount: 0 });
     boardsService.findExpenseScopeContext.mockResolvedValue([
       {
         board: { _id: boardId, name: 'Hogar', type: BoardType.EVERYDAY },
@@ -108,6 +112,43 @@ describe('ExpensesService category and payment methods', () => {
     service = module.get(ExpensesService);
   });
 
+  describe('onModuleInit', () => {
+    it('backfills the explicit payment month from the legacy cycle label, then falls back to expenseDate for the rest', async () => {
+      expenseModel.collection.updateMany.mockResolvedValue({
+        modifiedCount: 2,
+      });
+      expenseModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      });
+
+      await service.onModuleInit();
+
+      expect(expenseModel.collection.updateMany).toHaveBeenNthCalledWith(
+        1,
+        {
+          paymentYearMonth: { $exists: false },
+          billingCycleLabel: { $type: 'string' },
+        },
+        [{ $set: { paymentYearMonth: '$billingCycleLabel' } }],
+      );
+      expect(expenseModel.collection.updateMany).toHaveBeenNthCalledWith(
+        2,
+        { paymentYearMonth: { $exists: false } },
+        [
+          {
+            $set: {
+              paymentYearMonth: {
+                $dateToString: { format: '%Y-%m', date: '$expenseDate' },
+              },
+            },
+          },
+        ],
+      );
+    });
+  });
+
   describe('create', () => {
     it('should reject categoryId from another board', async () => {
       boardsService.findByIdOrFail.mockResolvedValue({
@@ -128,6 +169,7 @@ describe('ExpensesService category and payment methods', () => {
             amount: 25,
             description: 'Almuerzo',
             categoryId: categoryId.toString(),
+            paymentYearMonth: '2026-07',
           },
           userId,
         ),
@@ -149,6 +191,7 @@ describe('ExpensesService category and payment methods', () => {
             amount: 25,
             description: 'Almuerzo',
             paymentMethodId: paymentMethodId.toString(),
+            paymentYearMonth: '2026-07',
           },
           userId,
         ),
@@ -210,7 +253,7 @@ describe('ExpensesService category and payment methods', () => {
       });
     });
 
-    it('should find expenses by their assigned billing cycle', async () => {
+    it('should find expenses by their assigned payment month', async () => {
       const leanMock = jest.fn().mockResolvedValue([]);
       const sortMock = jest.fn().mockReturnValue({ lean: leanMock });
       expenseModel.find.mockReturnValue({
@@ -219,12 +262,12 @@ describe('ExpensesService category and payment methods', () => {
       });
 
       await service.findAll(boardId.toString(), userId, {
-        billingCycleLabel: '2026-10',
+        paymentYearMonth: '2026-10',
       });
 
       expect(expenseModel.find).toHaveBeenCalledWith({
         tripId: { $in: [boardId] },
-        billingCycleLabel: '2026-10',
+        paymentYearMonth: '2026-10',
       });
     });
   });
@@ -286,21 +329,24 @@ describe('ExpensesService category and payment methods', () => {
       expect(expenseDoc.save).toHaveBeenCalled();
     });
 
-    it('should not erase required fields when confirming closing-day review', async () => {
+    it('marks amount/description as overridden when they actually change on an installment cuota', async () => {
+      const installmentPlanId = new Types.ObjectId();
       const expenseDoc = {
         _id: expenseId,
         tripId: boardId,
-        description: 'Propina Rappi',
+        description: 'Cuota original',
         amount: 1000,
         currency: 'ARS',
-        status: ExpenseStatus.PAID,
-        closingDayReviewed: false,
+        status: ExpenseStatus.PENDING,
         isDivisible: false,
         splits: [],
         paymentMethod: PaymentMethod.CARD,
         paidByParticipantId: participantId,
-        expenseDate: new Date('2026-08-28'),
-        save: jest.fn().mockImplementation(function () {
+        expenseDate: new Date('2026-09-10'),
+        installmentPlanId,
+        installmentNumber: 2,
+        overriddenFields: [],
+        save: jest.fn().mockImplementation(function (this: unknown) {
           return Promise.resolve(this);
         }),
       };
@@ -322,22 +368,61 @@ describe('ExpensesService category and payment methods', () => {
 
       await service.update(
         expenseId.toString(),
-        {
-          closingDayReviewed: true,
-          description: undefined,
-          amount: undefined,
-          currency: undefined,
-        },
+        { amount: 1500, description: 'Corregí el monto a mano' },
         userId,
       );
 
-      expect(expenseDoc).toMatchObject({
-        description: 'Propina Rappi',
+      expect(expenseDoc.overriddenFields).toEqual(
+        expect.arrayContaining(['amount', 'description']),
+      );
+    });
+
+    it('does not mark fields as overridden when the same value is resent unchanged', async () => {
+      const installmentPlanId = new Types.ObjectId();
+      const expenseDoc = {
+        _id: expenseId,
+        tripId: boardId,
+        description: 'Cuota original',
         amount: 1000,
         currency: 'ARS',
-        closingDayReviewed: true,
+        status: ExpenseStatus.PENDING,
+        isDivisible: false,
+        splits: [],
+        paymentMethod: PaymentMethod.CARD,
+        paidByParticipantId: participantId,
+        expenseDate: new Date('2026-09-10'),
+        installmentPlanId,
+        installmentNumber: 2,
+        overriddenFields: [],
+        save: jest.fn().mockImplementation(function (this: unknown) {
+          return Promise.resolve(this);
+        }),
+      };
+
+      expenseModel.findById.mockResolvedValueOnce(expenseDoc).mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({
+          ...expenseDoc,
+          createdBy: new Types.ObjectId(userId),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
       });
-      expect(expenseDoc.save).toHaveBeenCalled();
+      boardsService.findByIdOrFail.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.EVERYDAY,
+      });
+      participantModel.findOne.mockResolvedValue({ _id: participantId });
+
+      // The quick-expense-form always resends amount/description, even
+      // when the user didn't touch them — only a real change should count.
+      await service.update(
+        expenseId.toString(),
+        { amount: 1000, description: 'Cuota original' },
+        userId,
+      );
+
+      expect(expenseDoc.overriddenFields).toEqual([]);
     });
   });
 });

@@ -4,7 +4,6 @@ import { Model, Types } from 'mongoose';
 import { IncomesService } from '../incomes/incomes.service';
 import { InstallmentPlansService } from '../installment-plans/installment-plans.service';
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
-import { getInstallmentDueInMonth } from '../common/utils/installment-schedule';
 import {
   getCurrentYearMonth,
   parseYearMonth,
@@ -17,14 +16,8 @@ import {
   ExpenseDocument,
   ExpenseStatus,
 } from '../expenses/expense.schema';
-import { getInstallmentAmountInBoardCurrency } from '../common/utils/installment-board-currency';
 import { ExpenseFxResolver } from '../fx/expense-fx.resolver';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
-import { PaymentMethod } from '../payment-methods/payment-method.schema';
-import {
-  type ExpenseAttributionMode,
-  expenseBelongsToYearMonth,
-} from '../common/utils/expense-month-attribution';
 
 function getDocumentId(doc: unknown): string {
   const record = doc as { _id?: { toString(): string } };
@@ -80,7 +73,6 @@ export interface MonthlyForecast {
   boardId: string;
   yearMonth: string;
   currency: string;
-  attributionMode: ExpenseAttributionMode;
   isFutureMonth: boolean;
   actual: {
     totalIncomes: number;
@@ -115,30 +107,17 @@ export class ForecastService {
     boardId: string,
     yearMonth: string,
     userId: string,
-    attributionMode: ExpenseAttributionMode = 'calendar',
   ): Promise<MonthlyForecast> {
     await this.materializationService.ensureHorizon(boardId, userId);
+    await this.installmentPlansService.ensureExpenseOccurrences(
+      boardId,
+      userId,
+    );
 
     const actualSummary = await this.incomesService.getMonthlySummary(
       boardId,
       yearMonth,
       userId,
-      attributionMode,
-    );
-
-    const installmentPlans =
-      await this.installmentPlansService.findActiveByBoard(boardId, userId);
-
-    const paymentMethods =
-      await this.paymentMethodsService.findAvailableForBoard(boardId, userId);
-    const paymentMethodMap = new Map(
-      paymentMethods.map((method) => {
-        const record = method as PaymentMethod & { _id: Types.ObjectId };
-        return [
-          record._id.toString(),
-          { kind: record.kind, closingDay: record.closingDay },
-        ];
-      }),
     );
 
     const boardCurrency = actualSummary.currency;
@@ -162,24 +141,12 @@ export class ForecastService {
         })
         .lean(),
       this.expenseModel
-        .find(
-          attributionMode === 'calendar'
-            ? {
-                tripId: boardObjectId,
-                recurringExpenseId: { $exists: true },
-                expenseDate: dateFilter,
-                skippedAt: { $exists: false },
-              }
-            : {
-                tripId: boardObjectId,
-                recurringExpenseId: { $exists: true },
-                skippedAt: { $exists: false },
-                $or: [
-                  { billingCycleLabel: yearMonth },
-                  { expenseDate: dateFilter },
-                ],
-              },
-        )
+        .find({
+          tripId: boardObjectId,
+          recurringExpenseId: { $exists: true },
+          paymentYearMonth: yearMonth,
+          skippedAt: { $exists: false },
+        })
         .lean(),
     ]);
 
@@ -209,39 +176,10 @@ export class ForecastService {
     for (const expense of materializedExpenses) {
       if (expense.status !== ExpenseStatus.PENDING) continue;
 
-      if (
-        attributionMode === 'cash_impact' &&
-        !expenseBelongsToYearMonth(
-          expense,
-          yearMonth,
-          attributionMode,
-          paymentMethodMap,
-        )
-      ) {
-        continue;
-      }
-
-      const paymentMethodId = expense.paymentMethodId?.toString();
-      const paymentMethod = paymentMethodId
-        ? paymentMethods.find(
-            (method) =>
-              (
-                method as PaymentMethod & { _id: Types.ObjectId }
-              )._id.toString() === paymentMethodId,
-          )
-        : undefined;
-
-      const amountInBoard =
-        await this.expenseFxResolver.getAmountInBoardCurrency(
-          expense,
-          boardCurrency,
-          paymentMethod
-            ? {
-                kind: paymentMethod.kind,
-                closingDay: paymentMethod.closingDay,
-              }
-            : null,
-        );
+      const amountInBoard = this.expenseFxResolver.getAmountInBoardCurrency(
+        expense,
+        boardCurrency,
+      );
       if (amountInBoard == null) continue;
 
       plannedFixedExpenses.push({
@@ -258,37 +196,7 @@ export class ForecastService {
     }
 
     const plannedInstallments: ForecastLineItem[] = [];
-    let plannedInstallmentTotal = 0;
-
-    for (const plan of installmentPlans) {
-      const due = getInstallmentDueInMonth(plan, yearMonth);
-      if (!due) continue;
-
-      const amountInBoard = getInstallmentAmountInBoardCurrency(
-        plan,
-        boardCurrency,
-      );
-      if (amountInBoard == null) continue;
-
-      plannedInstallmentTotal += amountInBoard;
-      plannedInstallments.push({
-        id: getDocumentId(plan),
-        label: plan.label,
-        amount: amountInBoard,
-        currency: boardCurrency,
-        dayOfMonth: due.dayOfMonth,
-        kind: 'installment',
-        meta: {
-          installmentNumber: due.installmentNumber,
-          totalInstallments: plan.totalInstallments,
-          paymentMethodId: plan.paymentMethodId?.toString(),
-          originalAmount: due.amount,
-          originalCurrency: plan.currency,
-        },
-      });
-    }
-
-    const totalPlannedOutflows = plannedFixedTotal + plannedInstallmentTotal;
+    const totalPlannedOutflows = plannedFixedTotal;
 
     const projectedRemaining =
       actualSummary.remaining + plannedIncomeTotal - totalPlannedOutflows;
@@ -297,7 +205,6 @@ export class ForecastService {
       boardId,
       yearMonth,
       currency: boardCurrency,
-      attributionMode,
       isFutureMonth,
       actual: {
         totalIncomes: actualSummary.totalIncomes,

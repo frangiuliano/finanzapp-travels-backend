@@ -28,7 +28,6 @@ import { Card } from '../cards/card.schema';
 import { User } from '../users/user.schema';
 import { BotUpdate } from '../bot/bot-update.schema';
 import { PaymentMethod } from '../payment-methods/payment-method.schema';
-import { BillingPeriod } from '../billing-periods/billing-period.schema';
 import { InAppNotification } from '../in-app-notifications/in-app-notification.schema';
 
 describe('BoardsService', () => {
@@ -95,7 +94,6 @@ describe('BoardsService', () => {
     { provide: getModelToken(User.name), useValue: cascadeModel },
     { provide: getModelToken(BotUpdate.name), useValue: cascadeModel },
     { provide: getModelToken(PaymentMethod.name), useValue: recurringModel },
-    { provide: getModelToken(BillingPeriod.name), useValue: cascadeModel },
     { provide: getModelToken(InAppNotification.name), useValue: cascadeModel },
   ];
 

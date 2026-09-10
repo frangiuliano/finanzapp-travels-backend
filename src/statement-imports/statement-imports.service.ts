@@ -30,7 +30,6 @@ import { StatementLlmFallbackService } from './parsing/statement-llm-fallback.se
 import { matchStatementLines } from './parsing/duplicate-matcher';
 import { ConfirmStatementImportDto } from './dto/confirm-statement-import.dto';
 import { toSafeErrorMessage } from '../common/utils/log-redaction.util';
-import { BillingPeriodsService } from '../billing-periods/billing-periods.service';
 
 const LLM_FALLBACK_CONFIDENCE_THRESHOLD = 0.5;
 const DUPLICATE_LOOKUP_WINDOW_DAYS = 3;
@@ -53,7 +52,6 @@ export class StatementImportsService {
     private paymentMethodsService: PaymentMethodsService,
     private expensesService: ExpensesService,
     private llmFallback: StatementLlmFallbackService,
-    private billingPeriodsService: BillingPeriodsService,
   ) {}
 
   async processUpload(
@@ -101,10 +99,7 @@ export class StatementImportsService {
       }
     }
 
-    const { periodFrom, periodTo } = await this.computePeriodRange(
-      paymentMethodId,
-      resolvedLines,
-    );
+    const { periodFrom, periodTo } = this.computePeriodRange(resolvedLines);
 
     const linesWithDuplicates = await this.markPossibleDuplicates(
       resolvedLines,
@@ -139,14 +134,15 @@ export class StatementImportsService {
   }
 
   /**
-   * Union of the parsed statement's own date range and the card's
-   * confirmed billing cycle overlapping it (if any) — always at least as
-   * wide as what the PDF itself contains, never narrower.
+   * The parsed statement's own date range, padded by a few days on each
+   * side so duplicate-detection doesn't miss lines just outside it (there's
+   * no more card billing cycle to widen against — dates are informational).
    */
-  private async computePeriodRange(
-    paymentMethodId: string,
-    lines: ParsedStatementLine[],
-  ): Promise<{ periodFrom: string; periodTo: string }> {
+  private computePeriodRange(lines: ParsedStatementLine[]): {
+    periodFrom: string;
+    periodTo: string;
+  } {
+    const PADDING_DAYS = 3;
     if (lines.length === 0) {
       const today = new Date().toISOString().slice(0, 10);
       return { periodFrom: today, periodTo: today };
@@ -156,25 +152,15 @@ export class StatementImportsService {
     const parsedMinDate = dates[0];
     const parsedMaxDate = dates[dates.length - 1];
 
-    const overlappingCycle = await this.billingPeriodsService.findOverlapping(
-      paymentMethodId,
-      parsedMinDate,
-      parsedMaxDate,
-    );
-
-    if (!overlappingCycle) {
-      return { periodFrom: parsedMinDate, periodTo: parsedMaxDate };
-    }
+    const padDate = (dateStr: string, deltaDays: number): string => {
+      const date = new Date(`${dateStr}T00:00:00.000Z`);
+      date.setUTCDate(date.getUTCDate() + deltaDays);
+      return date.toISOString().slice(0, 10);
+    };
 
     return {
-      periodFrom:
-        overlappingCycle.periodFrom < parsedMinDate
-          ? overlappingCycle.periodFrom
-          : parsedMinDate,
-      periodTo:
-        overlappingCycle.periodTo > parsedMaxDate
-          ? overlappingCycle.periodTo
-          : parsedMaxDate,
+      periodFrom: padDate(parsedMinDate, -PADDING_DAYS),
+      periodTo: padDate(parsedMaxDate, PADDING_DAYS),
     };
   }
 
@@ -231,6 +217,7 @@ export class StatementImportsService {
             merchantName: overrides.merchantName,
             categoryId: overrides.categoryId,
             expenseDate: overrides.expenseDate ?? line.date,
+            paymentYearMonth: (overrides.expenseDate ?? line.date).slice(0, 7),
             clientRequestId: selection.tempId,
           },
           userId,

@@ -113,6 +113,7 @@ describe('ExpensesService board gates', () => {
             amount: 10,
             description: 'Cafe',
             budgetId: budgetId.toString(),
+            paymentYearMonth: '2026-07',
           },
           userId,
         ),
@@ -185,6 +186,7 @@ describe('ExpensesService board gates', () => {
           amount: 10,
           description: 'Netflix',
           status: ExpenseStatus.PENDING,
+          paymentYearMonth: '2026-07',
         },
         userId,
       );
@@ -262,6 +264,7 @@ describe('ExpensesService board gates', () => {
           boardId: boardId.toString(),
           amount: 10,
           description: 'Cafe',
+          paymentYearMonth: '2026-07',
         },
         userId,
       );

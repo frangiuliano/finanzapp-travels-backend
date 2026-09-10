@@ -38,8 +38,6 @@ import {
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
 import { ExpenseFxResolver } from '../fx/expense-fx.resolver';
-import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
-import { PaymentMethod as PaymentMethodEntity } from '../payment-methods/payment-method.schema';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 import { DEFAULT_RECURRING_HORIZON_MONTHS } from '../common/constants/recurring-horizon';
 import {
@@ -81,7 +79,6 @@ export class RecurringMaterializationService {
     private participantsService: ParticipantsService,
     private boardsService: BoardsService,
     private expenseFxResolver: ExpenseFxResolver,
-    private paymentMethodsService: PaymentMethodsService,
   ) {}
 
   async ensureHorizon(
@@ -125,6 +122,17 @@ export class RecurringMaterializationService {
         endMonth,
       );
     }
+
+    await this.expenseModel.updateMany(
+      {
+        tripId: boardObjectId,
+        recurringExpenseId: { $exists: true },
+        status: ExpenseStatus.PENDING,
+        skippedAt: { $exists: false },
+        expenseDate: { $lte: new Date() },
+      },
+      { $set: { status: ExpenseStatus.PAID } },
+    );
 
     return { generated, horizonEnd: endMonth };
   }
@@ -391,8 +399,8 @@ export class RecurringMaterializationService {
     userId: string,
   ): Promise<void> {
     const expense = await this.expenseModel.findById(expenseId);
-    if (!expense?.recurringExpenseId) {
-      throw new BadRequestException('Solo se pueden omitir gastos recurrentes');
+    if (!expense?.recurringExpenseId && !expense?.installmentPlanId) {
+      throw new BadRequestException('Solo se pueden omitir gastos programados');
     }
 
     await this.participantsService.ensureParticipantAccess(
@@ -516,6 +524,7 @@ export class RecurringMaterializationService {
       endMonth,
     )) {
       if (this.isRuleInactiveForMonth(rule, yearMonth)) continue;
+      if (rule.excludedYearMonths?.includes(yearMonth)) continue;
 
       const amount = resolveAmountForYearMonth(versions, yearMonth);
       if (amount == null) continue;
@@ -587,18 +596,6 @@ export class RecurringMaterializationService {
     );
     const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
 
-    let paymentMethodForFx: PaymentMethodEntity | null = null;
-    if (rule.paymentMethodId) {
-      try {
-        paymentMethodForFx = await this.paymentMethodsService.findOne(
-          rule.paymentMethodId.toString(),
-          userId,
-        );
-      } catch {
-        paymentMethodForFx = null;
-      }
-    }
-
     const generationStart = this.getRuleGenerationStart(rule, startMonth);
     if (generationStart > endMonth) return 0;
 
@@ -609,6 +606,7 @@ export class RecurringMaterializationService {
       endMonth,
     )) {
       if (this.isRuleInactiveForMonth(rule, yearMonth)) continue;
+      if (rule.excludedYearMonths?.includes(yearMonth)) continue;
 
       const amount = resolveAmountForYearMonth(
         versions,
@@ -629,20 +627,16 @@ export class RecurringMaterializationService {
       const fxOnCreate = this.expenseFxResolver.buildFxOnCreate({
         expenseCurrency: rule.currency,
         boardCurrency,
-        expenseDate,
-        paymentMethod: paymentMethodForFx,
       });
 
       let fxRateToBoardCurrency: number | undefined;
       let fxCapturedAt: Date | undefined;
       let fxPolicy: ExpenseFxPolicy | undefined;
       let fxPurpose: ExpenseFxPurpose | undefined;
-      let billingCycleLabel: string | undefined;
 
       if (fxOnCreate) {
         fxPolicy = fxOnCreate.fxPolicy;
         fxPurpose = fxOnCreate.fxPurpose;
-        billingCycleLabel = fxOnCreate.billingCycleLabel;
 
         if (fxOnCreate.fxPolicy === ExpenseFxPolicy.SPOT) {
           const snapshot = await this.expenseFxResolver.resolveSpotSnapshot(
@@ -663,7 +657,7 @@ export class RecurringMaterializationService {
           fxCapturedAt,
           fxPolicy,
           fxPurpose,
-          billingCycleLabel,
+          paymentYearMonth: yearMonth,
           description: rule.label,
           categoryId: rule.categoryId,
           paymentMethodId: rule.paymentMethodId,
@@ -782,6 +776,46 @@ export class RecurringMaterializationService {
       recurringExpenseId,
       status: ExpenseStatus.PENDING,
       expenseDate: { $gte: fromDate },
+    });
+  }
+
+  /**
+   * Called when a rule's excludedYearMonths checklist gains new months.
+   * Only removes pending occurrences for those specific months — paid
+   * history and other months are never touched.
+   */
+  async removePendingIncomeForExcludedMonths(
+    recurringIncomeId: string,
+    newlyExcludedYearMonths: string[],
+  ): Promise<void> {
+    if (newlyExcludedYearMonths.length === 0) return;
+    const rule = await this.recurringIncomeModel.findById(recurringIncomeId);
+    if (!rule) return;
+
+    for (const yearMonth of newlyExcludedYearMonths) {
+      const { from, toExclusive } = this.getMonthDateRange(yearMonth);
+      await this.incomeModel.deleteMany({
+        recurringIncomeId: rule._id,
+        status: IncomeStatus.PENDING,
+        skippedAt: { $exists: false },
+        incomeDate: { $gte: from, $lt: toExclusive },
+      });
+    }
+  }
+
+  async removePendingExpensesForExcludedMonths(
+    recurringExpenseId: string,
+    newlyExcludedYearMonths: string[],
+  ): Promise<void> {
+    if (newlyExcludedYearMonths.length === 0) return;
+    const rule = await this.recurringExpenseModel.findById(recurringExpenseId);
+    if (!rule) return;
+
+    await this.expenseModel.deleteMany({
+      recurringExpenseId: rule._id,
+      status: ExpenseStatus.PENDING,
+      skippedAt: { $exists: false },
+      paymentYearMonth: { $in: newlyExcludedYearMonths },
     });
   }
 

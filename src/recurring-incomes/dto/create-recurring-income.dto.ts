@@ -12,6 +12,7 @@ import {
   IsArray,
   ArrayMinSize,
   IsInt,
+  Matches,
 } from 'class-validator';
 import { SUPPORTED_CURRENCIES } from '../../common/constants/currencies';
 
@@ -51,4 +52,10 @@ export class CreateRecurringIncomeDto {
   @ArrayMinSize(1, { message: 'Seleccioná al menos un día del mes' })
   @IsInt({ each: true, message: 'Cada día debe ser un entero' })
   daysOfMonth: number[];
+
+  /** Months (YYYY-MM) unticked from the 12-month recurring checklist. */
+  @IsOptional()
+  @IsArray()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { each: true })
+  excludedYearMonths?: string[];
 }

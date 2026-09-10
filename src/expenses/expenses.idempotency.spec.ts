@@ -113,6 +113,7 @@ describe('ExpensesService idempotency', () => {
         amount: 99,
         description: 'Different amount',
         clientRequestId,
+        paymentYearMonth: '2026-07',
       },
       userId,
     );

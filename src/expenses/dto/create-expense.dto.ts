@@ -10,6 +10,7 @@ import {
   ValidateNested,
   IsIn,
   IsUUID,
+  Matches,
   Min,
   MinLength,
   MaxLength,
@@ -126,6 +127,13 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsString()
   expenseDate?: string;
+
+  @IsNotEmpty({ message: 'El mes de pago es obligatorio' })
+  @IsString({ message: 'El mes de pago debe ser texto' })
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, {
+    message: 'paymentYearMonth debe tener formato YYYY-MM',
+  })
+  paymentYearMonth: string;
 
   @IsOptional()
   @IsUUID('4', { message: 'clientRequestId debe ser un UUID v4 válido' })

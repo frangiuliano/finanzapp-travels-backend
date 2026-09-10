@@ -5,7 +5,6 @@ import {
   BadRequestException,
   Logger,
   OnModuleInit,
-  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -36,24 +35,18 @@ import {
   PaymentMethodKind,
 } from '../payment-methods/payment-method.schema';
 import { FxService } from '../fx/fx.service';
-import {
-  ExpenseFxResolver,
-  ExpenseDisplayFx,
-  PaymentMethodFxContext,
-} from '../fx/expense-fx.resolver';
+import { ExpenseFxResolver, ExpenseDisplayFx } from '../fx/expense-fx.resolver';
 import { ExpenseFxPolicy, ExpenseFxPurpose } from './expense.schema';
 import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
-import { isExpenseOnClosingDay } from '../common/utils/credit-cycle';
-import { BillingPeriodsService } from '../billing-periods/billing-periods.service';
 
 export interface ExpenseListFilters {
   budgetId?: string;
   status?: ExpenseStatus;
   categoryId?: string;
   paymentMethodId?: string;
-  billingCycleLabel?: string;
+  paymentYearMonth?: string;
   from?: string;
   to?: string;
 }
@@ -107,7 +100,6 @@ interface PopulatedPaymentMethodEntity {
   brand?: string;
   kind?: PaymentMethodKind;
   ownerType?: string;
-  closingDay?: number;
   userId?: PopulatedUser | Types.ObjectId;
   tripId?: Types.ObjectId;
 }
@@ -135,7 +127,7 @@ interface PopulatedExpense {
   splits?: PopulatedExpenseSplit[];
   createdBy: PopulatedUser | Types.ObjectId;
   expenseDate: Date;
-  closingDayReviewed?: boolean;
+  paymentYearMonth?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -212,8 +204,7 @@ const EXPENSE_RELATION_POPULATES = [
   { path: 'categoryId', select: '_id name icon color isActive' },
   {
     path: 'paymentMethodId',
-    select:
-      '_id name lastFourDigits brand kind ownerType closingDay userId tripId',
+    select: '_id name lastFourDigits brand kind ownerType userId tripId',
     populate: {
       path: 'userId',
       select: 'firstName lastName',
@@ -278,10 +269,53 @@ export class ExpensesService implements OnModuleInit {
     private fxService: FxService,
     private expenseFxResolver: ExpenseFxResolver,
     private materializationService: RecurringMaterializationService,
-    @Optional() private billingPeriodsService?: BillingPeriodsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
+    // Keep historical expenses visible immediately after deploying the new
+    // explicit payment-month model. The standalone migration remains useful
+    // for dry-runs, but startup also performs this safe, idempotent backfill so
+    // reads from Inicio, Movimientos, Reportes and Forecast do not depend on a
+    // separate operational step.
+    const paymentMonthBackfill = await this.expenseModel.collection.updateMany(
+      {
+        paymentYearMonth: { $exists: false },
+        billingCycleLabel: { $type: 'string' },
+      },
+      [{ $set: { paymentYearMonth: '$billingCycleLabel' } }],
+    );
+
+    if (paymentMonthBackfill.modifiedCount > 0) {
+      this.logger.log(
+        `Backfilled paymentYearMonth on ${paymentMonthBackfill.modifiedCount} legacy expenses from billingCycleLabel`,
+      );
+    }
+
+    // billingCycleLabel was only ever set for credit-card expenses with a
+    // configured closing day — cash/debit expenses, cards without a closing
+    // day, and every materialized installment/recurring occurrence never had
+    // it. Anything still missing paymentYearMonth falls back to its own
+    // (now purely informational) expenseDate, so it doesn't silently vanish
+    // from month-filtered views.
+    const fallbackBackfill = await this.expenseModel.collection.updateMany(
+      { paymentYearMonth: { $exists: false } },
+      [
+        {
+          $set: {
+            paymentYearMonth: {
+              $dateToString: { format: '%Y-%m', date: '$expenseDate' },
+            },
+          },
+        },
+      ],
+    );
+
+    if (fallbackBackfill.modifiedCount > 0) {
+      this.logger.log(
+        `Backfilled paymentYearMonth on ${fallbackBackfill.modifiedCount} legacy expenses from expenseDate`,
+      );
+    }
+
     const legacyExpenses = await this.expenseModel
       .find({
         cardId: { $exists: true, $ne: null },
@@ -501,15 +535,12 @@ export class ExpensesService implements OnModuleInit {
       createExpenseDto.paymentMethod || ExpensePaymentMethod.CASH;
     let paymentMethodObjectId: Types.ObjectId | undefined;
 
-    let paymentMethodForFx: PaymentMethodEntity | null = null;
-
     if (resolvedPaymentMethodId) {
       const method = await this.assertPaymentMethodAvailableForBoard(
         boardId,
         userId,
         resolvedPaymentMethodId,
       );
-      paymentMethodForFx = method;
       paymentMethodObjectId = new Types.ObjectId(resolvedPaymentMethodId);
       legacyPaymentMethod = this.mapKindToLegacyPaymentMethod(method.kind);
     }
@@ -521,21 +552,16 @@ export class ExpensesService implements OnModuleInit {
     const fxOnCreate = this.expenseFxResolver.buildFxOnCreate({
       expenseCurrency,
       boardCurrency,
-      expenseDate,
-      manualRate: createExpenseDto.fxRateOverride,
-      paymentMethod: paymentMethodForFx,
     });
 
     let fxRateToBoardCurrency: number | undefined;
     let fxCapturedAt: Date | undefined;
     let fxPolicy: ExpenseFxPolicy | undefined;
     let fxPurpose: ExpenseFxPurpose | undefined;
-    let billingCycleLabel: string | undefined;
 
     if (fxOnCreate) {
       fxPolicy = fxOnCreate.fxPolicy;
       fxPurpose = fxOnCreate.fxPurpose;
-      billingCycleLabel = fxOnCreate.billingCycleLabel;
 
       if (fxOnCreate.fxPolicy === ExpenseFxPolicy.SPOT) {
         const snapshot = await this.expenseFxResolver.resolveSpotSnapshot(
@@ -551,19 +577,6 @@ export class ExpensesService implements OnModuleInit {
       }
     }
 
-    if (
-      paymentMethodForFx?.kind === PaymentMethodKind.CREDIT &&
-      paymentMethodForFx.closingDay != null &&
-      resolvedPaymentMethodId
-    ) {
-      billingCycleLabel =
-        (await this.billingPeriodsService?.resolveExpenseCycleLabel(
-          resolvedPaymentMethodId,
-          expenseDate,
-          paymentMethodForFx.closingDay,
-        )) ?? billingCycleLabel;
-    }
-
     const expense = new this.expenseModel({
       tripId: new Types.ObjectId(boardId),
       budgetId: createExpenseDto.budgetId
@@ -575,7 +588,7 @@ export class ExpensesService implements OnModuleInit {
       fxCapturedAt,
       fxPolicy,
       fxPurpose,
-      billingCycleLabel,
+      paymentYearMonth: createExpenseDto.paymentYearMonth,
       description: createExpenseDto.description,
       merchantName: createExpenseDto.merchantName,
       tags: createExpenseDto.tags,
@@ -618,11 +631,10 @@ export class ExpensesService implements OnModuleInit {
 
     if (createExpenseDto.budgetId) {
       const amountForBudget =
-        (await this.expenseFxResolver.getAmountInBoardCurrency(
+        this.expenseFxResolver.getAmountInBoardCurrency(
           savedExpense,
           boardCurrency,
-          paymentMethodForFx,
-        )) ?? savedExpense.amount;
+        ) ?? savedExpense.amount;
       await this.updateBudgetSpent(createExpenseDto.budgetId, amountForBudget);
     }
 
@@ -671,7 +683,7 @@ export class ExpensesService implements OnModuleInit {
       budgetId?: Types.ObjectId;
       status?: ExpenseStatus;
       categoryId?: Types.ObjectId;
-      billingCycleLabel?: string;
+      paymentYearMonth?: string;
       $or?: Array<
         { paymentMethodId: Types.ObjectId } | { cardId: Types.ObjectId }
       >;
@@ -701,8 +713,8 @@ export class ExpensesService implements OnModuleInit {
       ];
     }
 
-    if (filters.billingCycleLabel) {
-      query.billingCycleLabel = filters.billingCycleLabel;
+    if (filters.paymentYearMonth) {
+      query.paymentYearMonth = filters.paymentYearMonth;
     }
 
     if (filters.from || filters.to) {
@@ -739,10 +751,10 @@ export class ExpensesService implements OnModuleInit {
       return [{ ...expense, amount: attributedAmount }];
     });
     const transformed = this.transformExpenses(attributedExpenses);
-    return Promise.all(
-      transformed.map(async (expense) => {
+    return Promise.resolve(
+      transformed.map((expense) => {
         const expenseId = (expense as Expense & { _id: string })._id.toString();
-        const enriched = await this.enrichWithDisplayFx(expense, boardCurrency);
+        const enriched = this.enrichWithDisplayFx(expense, boardCurrency);
         const source = sourceBoardById.get(expense.tripId.toString());
         return Object.assign(enriched, {
           sourceBoardId: expense.tripId.toString(),
@@ -917,7 +929,6 @@ export class ExpensesService implements OnModuleInit {
     let updatedPaymentMethodObjectId =
       expense.paymentMethodId ?? expense.cardId;
     let updatedLegacyPaymentMethod = expense.paymentMethod;
-    let updatedPaymentMethod: PaymentMethodEntity | null = null;
 
     if (
       updateExpenseDto.paymentMethodId !== undefined ||
@@ -929,7 +940,6 @@ export class ExpensesService implements OnModuleInit {
           userId,
           resolvedUpdatePaymentMethodId,
         );
-        updatedPaymentMethod = method;
         updatedPaymentMethodObjectId = new Types.ObjectId(
           resolvedUpdatePaymentMethodId,
         );
@@ -1066,6 +1076,9 @@ export class ExpensesService implements OnModuleInit {
       ),
     );
 
+    const originalAmountForOverride = expense.amount;
+    const originalDescriptionForOverride = expense.description;
+
     Object.assign(expense, {
       ...updateFields,
       budgetId:
@@ -1094,39 +1107,27 @@ export class ExpensesService implements OnModuleInit {
       expenseDate: updateExpenseDto.expenseDate
         ? new Date(updateExpenseDto.expenseDate)
         : expense.expenseDate,
+      paymentYearMonth:
+        updateExpenseDto.paymentYearMonth ?? expense.paymentYearMonth,
     });
 
-    if (
-      updateExpenseDto.expenseDate !== undefined ||
-      updateExpenseDto.paymentMethodId !== undefined ||
-      updateExpenseDto.cardId !== undefined
-    ) {
-      const methodId = updatedPaymentMethodObjectId?.toString();
-      const method = methodId
-        ? (updatedPaymentMethod ??
-          (await this.assertPaymentMethodAvailableForBoard(
-            boardIdStr,
-            userId,
-            methodId,
-          )))
-        : null;
-      expense.billingCycleLabel =
-        methodId &&
-        method?.kind === PaymentMethodKind.CREDIT &&
-        method.closingDay != null
-          ? await this.billingPeriodsService?.resolveExpenseCycleLabel(
-              methodId,
-              expense.expenseDate,
-              method.closingDay,
-            )
-          : undefined;
-    }
-
-    if (
-      updateExpenseDto.expenseDate !== undefined &&
-      updateExpenseDto.closingDayReviewed === undefined
-    ) {
-      expense.closingDayReviewed = false;
+    if (expense.installmentPlanId) {
+      const overriddenFields = new Set(expense.overriddenFields ?? []);
+      if (
+        updateExpenseDto.amount !== undefined &&
+        updateExpenseDto.amount !== originalAmountForOverride
+      ) {
+        overriddenFields.add('amount');
+      }
+      if (
+        updateExpenseDto.description !== undefined &&
+        updateExpenseDto.description !== originalDescriptionForOverride
+      ) {
+        overriddenFields.add('description');
+      }
+      if (overriddenFields.size > 0) {
+        expense.overriddenFields = Array.from(overriddenFields);
+      }
     }
 
     // Keep supporting legacy records that predate the explicit status field.
@@ -1801,7 +1802,6 @@ export class ExpensesService implements OnModuleInit {
           lastFourDigits: method.lastFourDigits,
           kind: method.kind,
           ownerType: method.ownerType,
-          closingDay: method.closingDay,
           brand: method.brand,
           type: resolveCardTypeFromBrand(method.brand, method.kind),
           user:
@@ -1818,11 +1818,6 @@ export class ExpensesService implements OnModuleInit {
         transformed.paymentMethodId = objectIdToString(method._id);
         transformed.card = methodData;
         transformed.cardId = objectIdToString(method._id);
-        transformed.needsClosingDayReview =
-          method.kind === PaymentMethodKind.CREDIT &&
-          typeof method.closingDay === 'number' &&
-          isExpenseOnClosingDay(expenseRecord.expenseDate, method.closingDay) &&
-          !expenseRecord.closingDayReviewed;
       } else if (isPopulatedCard(paymentMethodSource)) {
         const card = paymentMethodSource;
         const cardData: {
@@ -1998,30 +1993,13 @@ export class ExpensesService implements OnModuleInit {
     return expenses.map((expense) => this.transformExpense(expense));
   }
 
-  private getPaymentMethodFxContext(
-    expense: Record<string, unknown>,
-  ): PaymentMethodFxContext | null {
-    const detail = expense.paymentMethodDetail as
-      { kind?: PaymentMethodKind; closingDay?: number } | undefined;
-    if (!detail?.kind) {
-      return null;
-    }
-    return {
-      kind: detail.kind,
-      closingDay: detail.closingDay,
-    };
-  }
-
-  private async enrichWithDisplayFx(
+  private enrichWithDisplayFx(
     expense: Expense,
     boardCurrency: string,
-  ): Promise<Expense & { displayFx?: ExpenseDisplayFx }> {
-    const displayFx = await this.expenseFxResolver.resolveDisplayFx(
+  ): Expense & { displayFx?: ExpenseDisplayFx } {
+    const displayFx = this.expenseFxResolver.resolveDisplayFx(
       expense,
       boardCurrency,
-      this.getPaymentMethodFxContext(
-        expense as unknown as Record<string, unknown>,
-      ),
     );
 
     return {

@@ -28,6 +28,10 @@ export class RecurringIncome {
   @Prop({ required: false, match: /^\d{4}-(0[1-9]|1[0-2])$/ })
   inactiveFromYearMonth?: string;
 
+  /** Specific months (YYYY-MM) unticked from the recurring checklist — no occurrence is generated for these. */
+  @Prop({ type: [String], default: [] })
+  excludedYearMonths: string[];
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 }

@@ -61,10 +61,6 @@ import {
   PaymentMethodOwnerType,
 } from '../payment-methods/payment-method.schema';
 import {
-  BillingPeriod,
-  BillingPeriodDocument,
-} from '../billing-periods/billing-period.schema';
-import {
   InAppNotification,
   InAppNotificationDocument,
 } from '../in-app-notifications/in-app-notification.schema';
@@ -100,8 +96,6 @@ export class BoardsService implements OnModuleInit {
     private botUpdateModel: Model<BotUpdateDocument>,
     @InjectModel(PaymentMethod.name)
     private paymentMethodModel: Model<PaymentMethodDocument>,
-    @InjectModel(BillingPeriod.name)
-    private billingPeriodModel: Model<BillingPeriodDocument>,
     @InjectModel(InAppNotification.name)
     private inAppNotificationModel: Model<InAppNotificationDocument>,
     @Inject(forwardRef(() => CategoriesService))
@@ -664,9 +658,6 @@ export class BoardsService implements OnModuleInit {
       this.cardModel.deleteMany({ tripId: boardId }),
       this.participantModel.deleteMany({ tripId: boardId }),
       this.invitationModel.deleteMany({ tripId: boardId }),
-      this.billingPeriodModel.deleteMany({
-        paymentMethodId: { $in: boardPaymentMethodIds },
-      }),
       this.inAppNotificationModel.deleteMany({
         'payload.paymentMethodId': {
           $in: boardPaymentMethodIds.flatMap((methodId) => [

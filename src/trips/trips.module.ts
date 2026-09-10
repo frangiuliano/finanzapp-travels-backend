@@ -45,10 +45,6 @@ import {
   PaymentMethodSchema,
 } from '../payment-methods/payment-method.schema';
 import {
-  BillingPeriod,
-  BillingPeriodSchema,
-} from '../billing-periods/billing-period.schema';
-import {
   InAppNotification,
   InAppNotificationSchema,
 } from '../in-app-notifications/in-app-notification.schema';
@@ -77,7 +73,6 @@ import {
       { name: User.name, schema: UserSchema },
       { name: BotUpdate.name, schema: BotUpdateSchema },
       { name: PaymentMethod.name, schema: PaymentMethodSchema },
-      { name: BillingPeriod.name, schema: BillingPeriodSchema },
       {
         name: InAppNotification.name,
         schema: InAppNotificationSchema,

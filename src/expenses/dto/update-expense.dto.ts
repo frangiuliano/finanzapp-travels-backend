@@ -8,6 +8,7 @@ import {
   IsBoolean,
   ValidateNested,
   IsIn,
+  Matches,
   Min,
   MinLength,
   MaxLength,
@@ -118,6 +119,9 @@ export class UpdateExpenseDto {
   expenseDate?: string;
 
   @IsOptional()
-  @IsBoolean()
-  closingDayReviewed?: boolean;
+  @IsString()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, {
+    message: 'paymentYearMonth debe tener formato YYYY-MM',
+  })
+  paymentYearMonth?: string;
 }

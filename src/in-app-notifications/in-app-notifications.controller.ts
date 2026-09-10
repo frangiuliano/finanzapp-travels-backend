@@ -1,15 +1,12 @@
 import {
   Controller,
   Get,
-  Inject,
   Patch,
   Param,
   Query,
   UseGuards,
-  forwardRef,
 } from '@nestjs/common';
 import { InAppNotificationsService } from './in-app-notifications.service';
-import { BillingPeriodsService } from '../billing-periods/billing-periods.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { UserDocument } from '../users/user.schema';
@@ -19,8 +16,6 @@ import { UserDocument } from '../users/user.schema';
 export class InAppNotificationsController {
   constructor(
     private readonly notificationsService: InAppNotificationsService,
-    @Inject(forwardRef(() => BillingPeriodsService))
-    private readonly billingPeriodsService: BillingPeriodsService,
   ) {}
 
   @Get()
@@ -28,10 +23,6 @@ export class InAppNotificationsController {
     @GetUser() user: UserDocument,
     @Query('unreadOnly') unreadOnly?: string,
   ) {
-    await this.billingPeriodsService.syncNotificationsForUser(
-      user._id.toString(),
-    );
-
     const notifications = await this.notificationsService.findForUser(
       user._id.toString(),
       { unreadOnly: unreadOnly === 'true' },
@@ -42,10 +33,6 @@ export class InAppNotificationsController {
 
   @Get('unread-count')
   async getUnreadCount(@GetUser() user: UserDocument) {
-    await this.billingPeriodsService.syncNotificationsForUser(
-      user._id.toString(),
-    );
-
     const count = await this.notificationsService.getUnreadCount(
       user._id.toString(),
     );

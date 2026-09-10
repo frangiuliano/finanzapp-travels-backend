@@ -22,7 +22,6 @@ import { RecurringExpensesModule } from './recurring-expenses/recurring-expenses
 import { InstallmentPlansModule } from './installment-plans/installment-plans.module';
 import { ForecastModule } from './forecast/forecast.module';
 import { InAppNotificationsModule } from './in-app-notifications/in-app-notifications.module';
-import { BillingPeriodsModule } from './billing-periods/billing-periods.module';
 import { WealthModule } from './wealth/wealth.module';
 import { StatementImportsModule } from './statement-imports/statement-imports.module';
 import { environmentValidationSchema } from './config/env.validation';
@@ -72,7 +71,6 @@ import { environmentValidationSchema } from './config/env.validation';
     InstallmentPlansModule,
     ForecastModule,
     InAppNotificationsModule,
-    BillingPeriodsModule,
     WealthModule,
     StatementImportsModule,
   ],

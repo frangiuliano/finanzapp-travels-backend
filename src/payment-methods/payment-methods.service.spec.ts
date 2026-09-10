@@ -82,7 +82,7 @@ describe('PaymentMethodsService', () => {
   });
 
   describe('create', () => {
-    it('should create user-owned credit with closingDay', async () => {
+    it('should create user-owned credit', async () => {
       const result = await service.create(
         {
           ownerType: PaymentMethodOwnerType.USER,
@@ -91,12 +91,10 @@ describe('PaymentMethodsService', () => {
           institution: 'Nombre manipulable',
           institutionCode: 'galicia',
           lastFourDigits: '4242',
-          closingDay: 14,
         },
         userId,
       );
 
-      expect(result.closingDay).toBe(14);
       expect(result.kind).toBe(PaymentMethodKind.CREDIT);
       expect(result.institution).toBe('Banco Galicia');
       expect(result.institutionCode).toBe('galicia');
@@ -115,36 +113,6 @@ describe('PaymentMethodsService', () => {
           userId,
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
-    });
-
-    it('should reject closingDay above 31', async () => {
-      await expect(
-        service.create(
-          {
-            ownerType: PaymentMethodOwnerType.USER,
-            kind: PaymentMethodKind.CREDIT,
-            name: 'Visa',
-            lastFourDigits: '4242',
-            closingDay: 32,
-          },
-          userId,
-        ),
-      ).rejects.toBeInstanceOf(BadRequestException);
-    });
-
-    it('should accept closingDay of 31', async () => {
-      const method = await service.create(
-        {
-          ownerType: PaymentMethodOwnerType.USER,
-          kind: PaymentMethodKind.CREDIT,
-          name: 'Visa',
-          lastFourDigits: '4242',
-          closingDay: 31,
-        },
-        userId,
-      );
-
-      expect(method.closingDay).toBe(31);
     });
 
     it('should reject manual cash creation', async () => {

@@ -2334,6 +2334,7 @@ export class BotService {
         splitType: expense.splitType as SplitType | undefined,
         splits: expense.splits as ExpenseSplitDto[] | undefined,
         expenseDate: new Date().toISOString(),
+        paymentYearMonth: new Date().toISOString().slice(0, 7),
       };
 
       await this.expensesService.create(
