@@ -802,6 +802,13 @@ export class ExpensesService implements OnModuleInit {
       throw new NotFoundException('Gasto no encontrado');
     }
 
+    // Expenses created before `status` became required do not receive the
+    // schema default retroactively. Normalize them before any comparisons and
+    // before save() validates the complete document.
+    if (!expense.status) {
+      expense.status = ExpenseStatus.PAID;
+    }
+
     const board = await this.boardsService.findByIdOrFail(
       expense.tripId.toString(),
     );
@@ -1067,6 +1074,10 @@ export class ExpensesService implements OnModuleInit {
     ) {
       expense.closingDayReviewed = false;
     }
+
+    // A DTO can contain an explicit `status: undefined`, which causes the
+    // Object.assign above to erase the normalized legacy value.
+    expense.status ??= ExpenseStatus.PAID;
 
     expense.updatedAt = new Date();
     const updatedExpense = await expense.save();
@@ -1631,6 +1642,7 @@ export class ExpensesService implements OnModuleInit {
     transformed._id = objectIdToString(expenseRecord._id);
     transformed.tripId = objectIdToString(expenseRecord.tripId);
     transformed.boardId = objectIdToString(expenseRecord.tripId);
+    transformed.status = expenseRecord.status ?? ExpenseStatus.PAID;
 
     if (expenseRecord.budgetId) {
       if (isPopulatedBudget(expenseRecord.budgetId)) {

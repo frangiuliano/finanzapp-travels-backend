@@ -342,6 +342,52 @@ describe('ExpensesService board gates', () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
+
+    it('should default legacy expenses without status before updating', async () => {
+      const legacyExpense = {
+        ...baseExpense,
+        status: undefined,
+        paymentMethod: 'cash',
+        paidByParticipantId: participantId,
+        expenseDate: new Date('2026-09-01T12:00:00.000Z'),
+        save: jest.fn().mockImplementation(function (
+          this: typeof legacyExpense,
+        ) {
+          return Promise.resolve(this);
+        }),
+      };
+      const populatedExpense = {
+        ...legacyExpense,
+        status: ExpenseStatus.PAID,
+        createdBy: new Types.ObjectId(userId),
+      };
+
+      expenseModel.findById
+        .mockResolvedValueOnce(legacyExpense)
+        .mockReturnValueOnce({
+          populate: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue(populatedExpense),
+        });
+      boardsService.findByIdOrFail.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.EVERYDAY,
+        baseCurrency: 'USD',
+      });
+      participantModel.findOne.mockResolvedValue({ _id: participantId });
+
+      const result = await service.update(
+        expenseId.toString(),
+        {
+          expenseDate: '2026-09-09T12:00:00.000Z',
+          status: undefined,
+        },
+        userId,
+      );
+
+      expect(legacyExpense.status).toBe(ExpenseStatus.PAID);
+      expect(legacyExpense.save).toHaveBeenCalled();
+      expect(result.status).toBe(ExpenseStatus.PAID);
+    });
   });
 
   describe('settleExpense', () => {
