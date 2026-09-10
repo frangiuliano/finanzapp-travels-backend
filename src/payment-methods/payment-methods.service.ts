@@ -588,8 +588,8 @@ export class PaymentMethodsService implements OnModuleInit {
       );
     }
 
-    if (closingDay < 1 || closingDay > 28) {
-      throw new BadRequestException('closingDay debe estar entre 1 y 28');
+    if (closingDay < 1 || closingDay > 31) {
+      throw new BadRequestException('closingDay debe estar entre 1 y 31');
     }
 
     return closingDay;

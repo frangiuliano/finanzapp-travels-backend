@@ -162,6 +162,10 @@ export class Expense {
   @Prop({ type: Date, required: false })
   skippedAt?: Date;
 
+  /** User confirmed this expense's cycle assignment despite falling on the card's closing day. */
+  @Prop({ type: Boolean, required: false, default: false })
+  closingDayReviewed?: boolean;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 

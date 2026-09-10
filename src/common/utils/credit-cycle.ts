@@ -27,13 +27,48 @@ function addUtcDays(dateStr: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** Number of days in a given month (month is 1-indexed). */
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/**
+ * Resolves the actual closing date (YYYY-MM-DD) for a given month, clamping
+ * closingDay to that month's last day when the month is shorter (e.g. a
+ * closingDay of 30 or 31 closes on Feb 28/29 in February).
+ */
+function getClosingDateForMonth(
+  year: number,
+  month: number,
+  closingDay: number,
+): string {
+  const day = Math.min(closingDay, daysInMonth(year, month));
+  return `${year}-${padMonth(month)}-${padDay(day)}`;
+}
+
 export function getNextCycleStart(closingDate: string): string {
   return addUtcDays(closingDate, 1);
 }
 
+/**
+ * True when expenseDate falls exactly on the card's closing day for its
+ * month (clamped to the month's last day for short months). Used to flag
+ * expenses whose cycle assignment can't be confirmed until the real
+ * statement arrives.
+ */
+export function isExpenseOnClosingDay(
+  expenseDate: Date,
+  closingDay: number,
+): boolean {
+  const year = expenseDate.getUTCFullYear();
+  const month = expenseDate.getUTCMonth() + 1;
+  const day = expenseDate.getUTCDate();
+  return day === Math.min(closingDay, daysInMonth(year, month));
+}
+
 export function assertValidClosingDay(closingDay: number): void {
-  if (!Number.isInteger(closingDay) || closingDay < 1 || closingDay > 28) {
-    throw new BadRequestException('closingDay debe ser un entero entre 1 y 28');
+  if (!Number.isInteger(closingDay) || closingDay < 1 || closingDay > 31) {
+    throw new BadRequestException('closingDay debe ser un entero entre 1 y 31');
   }
 }
 
@@ -58,8 +93,9 @@ export function resolveCycleClosingMonth(
   const year = expenseDate.getUTCFullYear();
   const month = expenseDate.getUTCMonth() + 1;
   const day = expenseDate.getUTCDate();
+  const effectiveClosingDay = Math.min(closingDay, daysInMonth(year, month));
 
-  if (day <= closingDay) {
+  if (day <= effectiveClosingDay) {
     return `${year}-${padMonth(month)}`;
   }
 
@@ -98,8 +134,10 @@ export function getCreditCycleRange(
     prevYear = year - 1;
   }
 
-  const from = `${prevYear}-${padMonth(prevMonth)}-${padDay(closingDay + 1)}`;
-  const periodToInclusive = `${year}-${padMonth(month)}-${padDay(closingDay)}`;
+  const from = getNextCycleStart(
+    getClosingDateForMonth(prevYear, prevMonth, closingDay),
+  );
+  const periodToInclusive = getClosingDateForMonth(year, month, closingDay);
   const toExclusive = addUtcDays(periodToInclusive, 1);
 
   return {

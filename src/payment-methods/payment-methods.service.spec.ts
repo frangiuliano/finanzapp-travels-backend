@@ -117,7 +117,7 @@ describe('PaymentMethodsService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('should reject closingDay above 28', async () => {
+    it('should reject closingDay above 31', async () => {
       await expect(
         service.create(
           {
@@ -125,11 +125,26 @@ describe('PaymentMethodsService', () => {
             kind: PaymentMethodKind.CREDIT,
             name: 'Visa',
             lastFourDigits: '4242',
-            closingDay: 31,
+            closingDay: 32,
           },
           userId,
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('should accept closingDay of 31', async () => {
+      const method = await service.create(
+        {
+          ownerType: PaymentMethodOwnerType.USER,
+          kind: PaymentMethodKind.CREDIT,
+          name: 'Visa',
+          lastFourDigits: '4242',
+          closingDay: 31,
+        },
+        userId,
+      );
+
+      expect(method.closingDay).toBe(31);
     });
 
     it('should reject manual cash creation', async () => {

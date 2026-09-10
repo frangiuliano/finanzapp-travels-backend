@@ -48,6 +48,11 @@ export class RecurringExpensesService {
     }
 
     assertValidDayOfMonth(createDto.dayOfMonth);
+    this.assertValidEscalation(
+      createDto.escalationType,
+      createDto.escalationValue,
+      createDto.escalationFrequencyMonths,
+    );
 
     await this.participantsService.ensureParticipantAccess(boardId, userId);
     const board = await this.boardsService.findByIdOrFail(boardId);
@@ -65,6 +70,9 @@ export class RecurringExpensesService {
       paymentMethodId: createDto.paymentMethodId
         ? new Types.ObjectId(createDto.paymentMethodId)
         : undefined,
+      escalationType: createDto.escalationType,
+      escalationValue: createDto.escalationValue,
+      escalationFrequencyMonths: createDto.escalationFrequencyMonths,
       createdBy: new Types.ObjectId(userId),
     });
 
@@ -178,9 +186,47 @@ export class RecurringExpensesService {
     }
     if (updateDto.isActive !== undefined) item.isActive = updateDto.isActive;
 
+    let escalationChanged = false;
+    if (updateDto.disableEscalation) {
+      escalationChanged =
+        item.escalationType !== undefined ||
+        item.escalationValue !== undefined ||
+        item.escalationFrequencyMonths !== undefined;
+      item.escalationType = undefined;
+      item.escalationValue = undefined;
+      item.escalationFrequencyMonths = undefined;
+    } else if (
+      updateDto.escalationType !== undefined ||
+      updateDto.escalationValue !== undefined ||
+      updateDto.escalationFrequencyMonths !== undefined
+    ) {
+      const nextType = updateDto.escalationType ?? item.escalationType;
+      const nextValue = updateDto.escalationValue ?? item.escalationValue;
+      const nextFrequency =
+        updateDto.escalationFrequencyMonths ?? item.escalationFrequencyMonths;
+
+      this.assertValidEscalation(nextType, nextValue, nextFrequency);
+
+      escalationChanged =
+        item.escalationType !== nextType ||
+        item.escalationValue !== nextValue ||
+        item.escalationFrequencyMonths !== nextFrequency;
+
+      item.escalationType = nextType;
+      item.escalationValue = nextValue;
+      item.escalationFrequencyMonths = nextFrequency;
+    }
+
     const saved = await item.save();
 
     await this.materializationService.ensureHorizon(boardId, userId);
+
+    if (escalationChanged) {
+      await this.materializationService.syncPendingExpenseAmountsFromMonth(
+        id,
+        getCurrentYearMonth(),
+      );
+    }
 
     this.logger.log(`Recurring expense updated: ${id}`);
     return saved;
@@ -200,5 +246,33 @@ export class RecurringExpensesService {
     await this.materializationService.deleteRuleOccurrences(null, id);
     await this.recurringExpenseModel.findByIdAndDelete(id);
     this.logger.log(`Recurring expense deleted: ${id}`);
+  }
+
+  private assertValidEscalation(
+    type?: 'percent' | 'fixed',
+    value?: number,
+    frequencyMonths?: number,
+  ): void {
+    const anyFieldSet =
+      type !== undefined ||
+      value !== undefined ||
+      frequencyMonths !== undefined;
+    if (!anyFieldSet) return;
+
+    if (
+      type === undefined ||
+      value === undefined ||
+      frequencyMonths === undefined
+    ) {
+      throw new BadRequestException(
+        'Para configurar el aumento hace falta el tipo, el valor y cada cuántos meses se aplica',
+      );
+    }
+
+    if (type === 'percent' && value > 1000) {
+      throw new BadRequestException(
+        'El porcentaje de aumento debe ser menor o igual a 1000',
+      );
+    }
   }
 }

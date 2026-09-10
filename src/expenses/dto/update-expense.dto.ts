@@ -116,4 +116,8 @@ export class UpdateExpenseDto {
   @IsOptional()
   @IsString()
   expenseDate?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  closingDayReviewed?: boolean;
 }

@@ -49,13 +49,13 @@ export class UpdatePaymentMethodDto {
   brand?: string;
 
   @IsOptional()
-  @Min(1, { message: 'closingDay debe estar entre 1 y 28' })
-  @Max(28, { message: 'closingDay debe estar entre 1 y 28' })
+  @Min(1, { message: 'closingDay debe estar entre 1 y 31' })
+  @Max(31, { message: 'closingDay debe estar entre 1 y 31' })
   closingDay?: number;
 
   @IsOptional()
-  @Min(1, { message: 'dueDay debe estar entre 1 y 28' })
-  @Max(28, { message: 'dueDay debe estar entre 1 y 28' })
+  @Min(1, { message: 'dueDay debe estar entre 1 y 31' })
+  @Max(31, { message: 'dueDay debe estar entre 1 y 31' })
   dueDay?: number;
 
   @IsOptional()

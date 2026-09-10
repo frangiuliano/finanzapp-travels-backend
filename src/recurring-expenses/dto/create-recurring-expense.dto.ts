@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsIn,
   Min,
+  Max,
   MinLength,
   MaxLength,
   ValidateIf,
@@ -56,4 +57,21 @@ export class CreateRecurringExpenseDto {
   @IsOptional()
   @IsMongoId()
   paymentMethodId?: string;
+
+  @IsOptional()
+  @IsIn(['percent', 'fixed'], {
+    message: 'escalationType debe ser "percent" o "fixed"',
+  })
+  escalationType?: 'percent' | 'fixed';
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01, { message: 'escalationValue debe ser mayor a 0' })
+  escalationValue?: number;
+
+  @IsOptional()
+  @IsInt({ message: 'escalationFrequencyMonths debe ser un entero' })
+  @Min(1, { message: 'escalationFrequencyMonths debe ser al menos 1' })
+  @Max(60, { message: 'escalationFrequencyMonths debe ser como máximo 60' })
+  escalationFrequencyMonths?: number;
 }

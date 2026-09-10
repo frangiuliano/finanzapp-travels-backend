@@ -47,7 +47,10 @@ import {
   getYearMonthFromDate,
   iterateYearMonthsInclusive,
 } from '../common/utils/iterate-year-months';
-import { resolveAmountForYearMonth } from '../common/utils/resolve-recurring-amount';
+import {
+  resolveAmountForYearMonth,
+  RecurringEscalation,
+} from '../common/utils/resolve-recurring-amount';
 import { getValidDaysInMonth } from '../common/utils/validate-day-of-month';
 import {
   getCurrentYearMonth,
@@ -607,7 +610,11 @@ export class RecurringMaterializationService {
     )) {
       if (this.isRuleInactiveForMonth(rule, yearMonth)) continue;
 
-      const amount = resolveAmountForYearMonth(versions, yearMonth);
+      const amount = resolveAmountForYearMonth(
+        versions,
+        yearMonth,
+        this.buildExpenseEscalation(rule),
+      );
       if (amount == null) continue;
 
       const validDays = getValidDaysInMonth([rule.dayOfMonth], yearMonth);
@@ -723,10 +730,11 @@ export class RecurringMaterializationService {
     }
   }
 
-  private async syncPendingExpenseAmountsFromMonth(
+  async syncPendingExpenseAmountsFromMonth(
     recurringExpenseId: string,
     fromYearMonth: string,
   ): Promise<void> {
+    const rule = await this.recurringExpenseModel.findById(recurringExpenseId);
     const versions = await this.recurringExpenseVersionModel
       .find({ recurringExpenseId: new Types.ObjectId(recurringExpenseId) })
       .lean();
@@ -741,7 +749,11 @@ export class RecurringMaterializationService {
       const yearMonth = getYearMonthFromDate(expense.expenseDate);
       if (yearMonth < fromYearMonth) continue;
 
-      const amount = resolveAmountForYearMonth(versions, yearMonth);
+      const amount = resolveAmountForYearMonth(
+        versions,
+        yearMonth,
+        rule ? this.buildExpenseEscalation(rule) : undefined,
+      );
       if (amount != null) {
         expense.amount = amount;
         await expense.save();
@@ -780,6 +792,26 @@ export class RecurringMaterializationService {
     const from = buildOccurrenceDate(yearMonth, 1);
     const toExclusive = buildOccurrenceDate(shiftYearMonth(yearMonth, 1), 1);
     return { from, toExclusive };
+  }
+
+  private buildExpenseEscalation(
+    rule: Pick<
+      RecurringExpense,
+      'escalationType' | 'escalationValue' | 'escalationFrequencyMonths'
+    >,
+  ): RecurringEscalation | undefined {
+    if (
+      !rule.escalationType ||
+      !rule.escalationValue ||
+      !rule.escalationFrequencyMonths
+    ) {
+      return undefined;
+    }
+    return {
+      type: rule.escalationType,
+      value: rule.escalationValue,
+      frequencyMonths: rule.escalationFrequencyMonths,
+    };
   }
 
   private isDuplicateKeyError(error: unknown): boolean {

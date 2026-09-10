@@ -34,6 +34,18 @@ export class RecurringExpense {
   @Prop({ required: false, match: /^\d{4}-(0[1-9]|1[0-2])$/ })
   inactiveFromYearMonth?: string;
 
+  /** 'percent' = grows by escalationValue% every interval (compounded). 'fixed' = adds escalationValue every interval. */
+  @Prop({ type: String, enum: ['percent', 'fixed'], required: false })
+  escalationType?: 'percent' | 'fixed';
+
+  /** Magnitude of the increase: a percentage (0-1000) when escalationType is 'percent', or a currency amount when 'fixed'. */
+  @Prop({ required: false, min: 0.01 })
+  escalationValue?: number;
+
+  /** How often the increase is applied, in months (e.g. 3 = every 3 months). */
+  @Prop({ required: false, min: 1, max: 60 })
+  escalationFrequencyMonths?: number;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 }

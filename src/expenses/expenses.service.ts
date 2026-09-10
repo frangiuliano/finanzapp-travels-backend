@@ -44,6 +44,7 @@ import { ExpenseFxPolicy, ExpenseFxPurpose } from './expense.schema';
 import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
+import { isExpenseOnClosingDay } from '../common/utils/credit-cycle';
 
 export interface ExpenseListFilters {
   budgetId?: string;
@@ -131,6 +132,7 @@ interface PopulatedExpense {
   splits?: PopulatedExpenseSplit[];
   createdBy: PopulatedUser | Types.ObjectId;
   expenseDate: Date;
+  closingDayReviewed?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1059,6 +1061,13 @@ export class ExpensesService implements OnModuleInit {
         : expense.expenseDate,
     });
 
+    if (
+      updateExpenseDto.expenseDate !== undefined &&
+      updateExpenseDto.closingDayReviewed === undefined
+    ) {
+      expense.closingDayReviewed = false;
+    }
+
     expense.updatedAt = new Date();
     const updatedExpense = await expense.save();
 
@@ -1749,6 +1758,11 @@ export class ExpensesService implements OnModuleInit {
         transformed.paymentMethodId = objectIdToString(method._id);
         transformed.card = methodData;
         transformed.cardId = objectIdToString(method._id);
+        transformed.needsClosingDayReview =
+          method.kind === PaymentMethodKind.CREDIT &&
+          typeof method.closingDay === 'number' &&
+          isExpenseOnClosingDay(expenseRecord.expenseDate, method.closingDay) &&
+          !expenseRecord.closingDayReviewed;
       } else if (isPopulatedCard(paymentMethodSource)) {
         const card = paymentMethodSource;
         const cardData: {
