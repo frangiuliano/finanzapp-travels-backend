@@ -9,8 +9,15 @@ describe('BillingPeriodsService cycle status', () => {
   const userId = new Types.ObjectId().toString();
   const lean = jest.fn();
   const sort = jest.fn(() => ({ lean }));
+  const periodsLean = jest.fn();
+  const periodsSort = jest.fn(() => ({ lean: periodsLean }));
   const billingPeriodModel = {
-    findOne: jest.fn(() => ({ sort })),
+    findOne: jest.fn(() => ({ sort, lean })),
+    find: jest.fn(() => ({ sort: periodsSort })),
+    distinct: jest.fn(),
+  };
+  const expenseModel = {
+    updateMany: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
   };
   const paymentMethodsService = {
     findOne: jest.fn(),
@@ -27,6 +34,7 @@ describe('BillingPeriodsService cycle status', () => {
     });
     service = new BillingPeriodsService(
       billingPeriodModel as never,
+      expenseModel as never,
       paymentMethodsService as unknown as PaymentMethodsService,
       notificationsService as InAppNotificationsService,
     );
@@ -64,5 +72,46 @@ describe('BillingPeriodsService cycle status', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('assigns an expense inside a confirmed real period to that cycle', async () => {
+    lean.mockResolvedValue({
+      cycleLabel: '2026-10',
+      periodFrom: '2026-08-27',
+      periodTo: '2026-10-01',
+    });
+
+    await expect(
+      service.resolveExpenseCycleLabel(
+        paymentMethodId,
+        new Date('2026-08-28T03:00:00.000Z'),
+        28,
+      ),
+    ).resolves.toBe('2026-10');
+  });
+
+  it('backfills existing expenses using confirmed period boundaries', async () => {
+    billingPeriodModel.distinct.mockResolvedValue([
+      new Types.ObjectId(paymentMethodId),
+    ]);
+    periodsLean.mockResolvedValue([
+      {
+        cycleLabel: '2026-10',
+        periodFrom: '2026-08-27',
+        periodTo: '2026-10-01',
+      },
+    ]);
+
+    await service.onModuleInit();
+
+    expect(expenseModel.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        expenseDate: {
+          $gte: new Date('2026-08-27T00:00:00.000Z'),
+          $lt: new Date('2026-10-02T00:00:00.000Z'),
+        },
+      }),
+      { $set: { billingCycleLabel: '2026-10' } },
+    );
   });
 });

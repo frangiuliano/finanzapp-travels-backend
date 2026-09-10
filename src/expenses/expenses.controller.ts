@@ -60,6 +60,7 @@ export class ExpensesController {
     @Query('status') status?: ExpenseStatus,
     @Query('categoryId') categoryId?: string,
     @Query('paymentMethodId') paymentMethodId?: string,
+    @Query('billingCycleLabel') billingCycleLabel?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
@@ -78,6 +79,7 @@ export class ExpensesController {
         status,
         categoryId,
         paymentMethodId,
+        billingCycleLabel,
         from,
         to,
       },

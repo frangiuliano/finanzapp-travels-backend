@@ -209,6 +209,24 @@ describe('ExpensesService category and payment methods', () => {
         ],
       });
     });
+
+    it('should find expenses by their assigned billing cycle', async () => {
+      const leanMock = jest.fn().mockResolvedValue([]);
+      const sortMock = jest.fn().mockReturnValue({ lean: leanMock });
+      expenseModel.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: sortMock,
+      });
+
+      await service.findAll(boardId.toString(), userId, {
+        billingCycleLabel: '2026-10',
+      });
+
+      expect(expenseModel.find).toHaveBeenCalledWith({
+        tripId: { $in: [boardId] },
+        billingCycleLabel: '2026-10',
+      });
+    });
   });
 
   describe('update', () => {
@@ -265,6 +283,60 @@ describe('ExpensesService category and payment methods', () => {
 
       expect(expenseDoc.cardId).toEqual(legacyCardId);
       expect(expenseDoc.paymentMethodId).toEqual(legacyCardId);
+      expect(expenseDoc.save).toHaveBeenCalled();
+    });
+
+    it('should not erase required fields when confirming closing-day review', async () => {
+      const expenseDoc = {
+        _id: expenseId,
+        tripId: boardId,
+        description: 'Propina Rappi',
+        amount: 1000,
+        currency: 'ARS',
+        status: ExpenseStatus.PAID,
+        closingDayReviewed: false,
+        isDivisible: false,
+        splits: [],
+        paymentMethod: PaymentMethod.CARD,
+        paidByParticipantId: participantId,
+        expenseDate: new Date('2026-08-28'),
+        save: jest.fn().mockImplementation(function () {
+          return Promise.resolve(this);
+        }),
+      };
+
+      expenseModel.findById.mockResolvedValueOnce(expenseDoc).mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({
+          ...expenseDoc,
+          createdBy: new Types.ObjectId(userId),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      });
+      boardsService.findByIdOrFail.mockResolvedValue({
+        _id: boardId,
+        type: BoardType.EVERYDAY,
+      });
+      participantModel.findOne.mockResolvedValue({ _id: participantId });
+
+      await service.update(
+        expenseId.toString(),
+        {
+          closingDayReviewed: true,
+          description: undefined,
+          amount: undefined,
+          currency: undefined,
+        },
+        userId,
+      );
+
+      expect(expenseDoc).toMatchObject({
+        description: 'Propina Rappi',
+        amount: 1000,
+        currency: 'ARS',
+        closingDayReviewed: true,
+      });
       expect(expenseDoc.save).toHaveBeenCalled();
     });
   });

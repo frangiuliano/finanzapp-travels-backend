@@ -5,6 +5,7 @@ import {
   BadRequestException,
   Logger,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -45,12 +46,14 @@ import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-c
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
 import { isExpenseOnClosingDay } from '../common/utils/credit-cycle';
+import { BillingPeriodsService } from '../billing-periods/billing-periods.service';
 
 export interface ExpenseListFilters {
   budgetId?: string;
   status?: ExpenseStatus;
   categoryId?: string;
   paymentMethodId?: string;
+  billingCycleLabel?: string;
   from?: string;
   to?: string;
 }
@@ -275,6 +278,7 @@ export class ExpensesService implements OnModuleInit {
     private fxService: FxService,
     private expenseFxResolver: ExpenseFxResolver,
     private materializationService: RecurringMaterializationService,
+    @Optional() private billingPeriodsService?: BillingPeriodsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -547,6 +551,19 @@ export class ExpensesService implements OnModuleInit {
       }
     }
 
+    if (
+      paymentMethodForFx?.kind === PaymentMethodKind.CREDIT &&
+      paymentMethodForFx.closingDay != null &&
+      resolvedPaymentMethodId
+    ) {
+      billingCycleLabel =
+        (await this.billingPeriodsService?.resolveExpenseCycleLabel(
+          resolvedPaymentMethodId,
+          expenseDate,
+          paymentMethodForFx.closingDay,
+        )) ?? billingCycleLabel;
+    }
+
     const expense = new this.expenseModel({
       tripId: new Types.ObjectId(boardId),
       budgetId: createExpenseDto.budgetId
@@ -654,6 +671,7 @@ export class ExpensesService implements OnModuleInit {
       budgetId?: Types.ObjectId;
       status?: ExpenseStatus;
       categoryId?: Types.ObjectId;
+      billingCycleLabel?: string;
       $or?: Array<
         { paymentMethodId: Types.ObjectId } | { cardId: Types.ObjectId }
       >;
@@ -681,6 +699,10 @@ export class ExpensesService implements OnModuleInit {
         { paymentMethodId: paymentMethodObjectId },
         { cardId: paymentMethodObjectId },
       ];
+    }
+
+    if (filters.billingCycleLabel) {
+      query.billingCycleLabel = filters.billingCycleLabel;
     }
 
     if (filters.from || filters.to) {
@@ -895,6 +917,7 @@ export class ExpensesService implements OnModuleInit {
     let updatedPaymentMethodObjectId =
       expense.paymentMethodId ?? expense.cardId;
     let updatedLegacyPaymentMethod = expense.paymentMethod;
+    let updatedPaymentMethod: PaymentMethodEntity | null = null;
 
     if (
       updateExpenseDto.paymentMethodId !== undefined ||
@@ -906,6 +929,7 @@ export class ExpensesService implements OnModuleInit {
           userId,
           resolvedUpdatePaymentMethodId,
         );
+        updatedPaymentMethod = method;
         updatedPaymentMethodObjectId = new Types.ObjectId(
           resolvedUpdatePaymentMethodId,
         );
@@ -1035,8 +1059,12 @@ export class ExpensesService implements OnModuleInit {
       processedSplits = undefined;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { tripId: _, boardId: __, ...updateFields } = updateExpenseDto;
+    const updateFields = Object.fromEntries(
+      Object.entries(updateExpenseDto).filter(
+        ([key, value]) =>
+          key !== 'tripId' && key !== 'boardId' && value !== undefined,
+      ),
+    );
 
     Object.assign(expense, {
       ...updateFields,
@@ -1069,14 +1097,39 @@ export class ExpensesService implements OnModuleInit {
     });
 
     if (
+      updateExpenseDto.expenseDate !== undefined ||
+      updateExpenseDto.paymentMethodId !== undefined ||
+      updateExpenseDto.cardId !== undefined
+    ) {
+      const methodId = updatedPaymentMethodObjectId?.toString();
+      const method = methodId
+        ? (updatedPaymentMethod ??
+          (await this.assertPaymentMethodAvailableForBoard(
+            boardIdStr,
+            userId,
+            methodId,
+          )))
+        : null;
+      expense.billingCycleLabel =
+        methodId &&
+        method?.kind === PaymentMethodKind.CREDIT &&
+        method.closingDay != null
+          ? await this.billingPeriodsService?.resolveExpenseCycleLabel(
+              methodId,
+              expense.expenseDate,
+              method.closingDay,
+            )
+          : undefined;
+    }
+
+    if (
       updateExpenseDto.expenseDate !== undefined &&
       updateExpenseDto.closingDayReviewed === undefined
     ) {
       expense.closingDayReviewed = false;
     }
 
-    // A DTO can contain an explicit `status: undefined`, which causes the
-    // Object.assign above to erase the normalized legacy value.
+    // Keep supporting legacy records that predate the explicit status field.
     expense.status ??= ExpenseStatus.PAID;
 
     expense.updatedAt = new Date();

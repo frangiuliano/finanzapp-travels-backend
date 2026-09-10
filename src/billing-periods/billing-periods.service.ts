@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  OnModuleInit,
   forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -23,7 +24,9 @@ import {
   getNextCycleStart,
   isCycleClosed,
   listRecentCycleLabels,
+  resolveCycleClosingMonth,
 } from '../common/utils/credit-cycle';
+import { Expense, ExpenseDocument } from '../expenses/expense.schema';
 
 export interface BillingPeriodDefaults {
   paymentMethodId: string;
@@ -50,14 +53,77 @@ function cycleLabelFor(date: string): string {
 }
 
 @Injectable()
-export class BillingPeriodsService {
+export class BillingPeriodsService implements OnModuleInit {
   constructor(
     @InjectModel(BillingPeriod.name)
     private billingPeriodModel: Model<BillingPeriodDocument>,
+    @InjectModel(Expense.name)
+    private expenseModel: Model<ExpenseDocument>,
     private paymentMethodsService: PaymentMethodsService,
     @Inject(forwardRef(() => InAppNotificationsService))
     private notificationsService: InAppNotificationsService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    const methodIds = await this.billingPeriodModel.distinct('paymentMethodId');
+    for (const methodId of methodIds) {
+      await this.reconcileExpenseCycleLabels(methodId.toString());
+    }
+  }
+
+  async resolveExpenseCycleLabel(
+    paymentMethodId: string,
+    expenseDate: Date,
+    closingDay: number,
+  ): Promise<string> {
+    const date = expenseDate.toISOString().slice(0, 10);
+    const confirmed = await this.billingPeriodModel
+      .findOne({
+        paymentMethodId: new Types.ObjectId(paymentMethodId),
+        periodFrom: { $lte: date },
+        periodTo: { $gte: date },
+      })
+      .lean();
+
+    return (
+      confirmed?.cycleLabel ?? resolveCycleClosingMonth(expenseDate, closingDay)
+    );
+  }
+
+  private async reconcileExpenseCycleLabels(
+    paymentMethodId: string,
+  ): Promise<void> {
+    const objectId = new Types.ObjectId(paymentMethodId);
+    const periods = await this.billingPeriodModel
+      .find({ paymentMethodId: objectId })
+      .sort({ periodFrom: 1 })
+      .lean();
+    if (periods.length === 0) return;
+
+    const methodFilter = {
+      $or: [{ paymentMethodId: objectId }, { cardId: objectId }],
+    };
+    await this.expenseModel.updateMany(
+      {
+        ...methodFilter,
+        billingCycleLabel: { $in: periods.map((period) => period.cycleLabel) },
+      },
+      { $unset: { billingCycleLabel: '' } },
+    );
+
+    for (const period of periods) {
+      await this.expenseModel.updateMany(
+        {
+          ...methodFilter,
+          expenseDate: {
+            $gte: new Date(`${period.periodFrom}T00:00:00.000Z`),
+            $lt: new Date(`${addUtcDay(period.periodTo)}T00:00:00.000Z`),
+          },
+        },
+        { $set: { billingCycleLabel: period.cycleLabel } },
+      );
+    }
+  }
 
   async findByPaymentMethod(
     paymentMethodId: string,
@@ -326,6 +392,8 @@ export class BillingPeriodsService {
     if (!period) {
       throw new NotFoundException('No se pudo guardar el período');
     }
+
+    await this.reconcileExpenseCycleLabels(dto.paymentMethodId);
 
     await this.notificationsService.markBillingPeriodNotificationsRead(
       userId,

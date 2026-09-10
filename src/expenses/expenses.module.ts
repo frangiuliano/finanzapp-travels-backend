@@ -16,6 +16,7 @@ import { CategoriesModule } from '../categories/categories.module';
 import { PaymentMethodsModule } from '../payment-methods/payment-methods.module';
 import { FxModule } from '../fx/fx.module';
 import { RecurringMaterializationModule } from '../recurring-materialization/recurring-materialization.module';
+import { BillingPeriodsModule } from '../billing-periods/billing-periods.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { RecurringMaterializationModule } from '../recurring-materialization/rec
     forwardRef(() => PaymentMethodsModule),
     FxModule,
     RecurringMaterializationModule,
+    BillingPeriodsModule,
   ],
   controllers: [ExpensesController],
   providers: [ExpensesService],
