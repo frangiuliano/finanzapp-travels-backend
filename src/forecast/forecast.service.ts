@@ -290,12 +290,8 @@ export class ForecastService {
 
     const totalPlannedOutflows = plannedFixedTotal + plannedInstallmentTotal;
 
-    const projectedRemaining = isFutureMonth
-      ? plannedIncomeTotal - totalPlannedOutflows
-      : actualSummary.remaining +
-        plannedIncomeTotal -
-        plannedFixedTotal -
-        plannedInstallmentTotal;
+    const projectedRemaining =
+      actualSummary.remaining + plannedIncomeTotal - totalPlannedOutflows;
 
     return {
       boardId,
