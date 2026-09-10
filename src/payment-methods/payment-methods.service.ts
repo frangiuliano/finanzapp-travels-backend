@@ -322,7 +322,7 @@ export class PaymentMethodsService implements OnModuleInit {
     return methods.map((method) => ({
       ...method,
       enabled: !disabledIdSet.has(method._id.toString()),
-    })) as PaymentMethodWithBoardVisibility[];
+    }));
   }
 
   async findParticipantMethodsForBoard(
@@ -364,7 +364,7 @@ export class PaymentMethodsService implements OnModuleInit {
     return methods.map((method) => ({
       ...method,
       enabled: !disabledIdSet.has(method._id.toString()),
-    })) as PaymentMethodWithBoardVisibility[];
+    }));
   }
 
   async updateBoardVisibility(

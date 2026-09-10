@@ -64,7 +64,7 @@ describe('FxService', () => {
           compra: 1240,
           fechaActualizacion: '2026-03-15T10:00:00.000Z',
         }),
-    }) as unknown as typeof fetch;
+    });
 
     const service = await createService();
     const snapshot = await service.resolveSnapshot('USD', 'ARS');
@@ -82,7 +82,7 @@ describe('FxService', () => {
           compra: 1170,
           fecha: '2026-02-14',
         }),
-    }) as unknown as typeof fetch;
+    });
 
     const service = await createService();
     const snapshot = await service.resolveHistoricalSnapshot(
@@ -113,7 +113,7 @@ describe('FxService', () => {
           result: 'success',
           conversion_rate: 1150.5,
         }),
-    }) as unknown as typeof fetch;
+    });
 
     const service = await createService({ FX_API_KEY: 'test-key' });
     const snapshot = await service.resolveSnapshot('EUR', 'ARS');
@@ -131,7 +131,7 @@ describe('FxService', () => {
         Promise.resolve({
           venta: 1100,
         }),
-    }) as unknown as typeof fetch;
+    });
 
     const service = await createService();
     await service.resolveSnapshot('USD', 'ARS');
@@ -148,9 +148,7 @@ describe('FxService', () => {
   it('returns service unavailable with a clear message on provider timeout', async () => {
     const timeout = new Error('timed out');
     timeout.name = 'TimeoutError';
-    global.fetch = jest
-      .fn()
-      .mockRejectedValue(timeout) as unknown as typeof fetch;
+    global.fetch = jest.fn().mockRejectedValue(timeout);
     const service = await createService();
 
     await expect(service.resolveSnapshot('USD', 'ARS')).rejects.toThrow(

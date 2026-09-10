@@ -13,6 +13,7 @@ export const GetUserOptional = createParamDecorator(
     }
 
     if (data) {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- returns a field value by key, never invoked as a method
       return request.user[data];
     }
 

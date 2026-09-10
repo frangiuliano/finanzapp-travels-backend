@@ -131,8 +131,7 @@ export class BoardCommandHandler {
     selection: string,
     activeBoardId: string | null,
   ):
-    | ({ name: string; type?: BoardType } & Record<string, unknown>)
-    | undefined {
+    ({ name: string; type?: BoardType } & Record<string, unknown>) | undefined {
     const index = Number.parseInt(selection, 10);
     if (!Number.isNaN(index) && index >= 1 && index <= boards.length) {
       return boards[index - 1];

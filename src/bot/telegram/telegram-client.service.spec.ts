@@ -25,7 +25,7 @@ describe('TelegramClientService external requests', () => {
   it('adds an abort signal when sending a message', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
-    }) as unknown as typeof fetch;
+    });
 
     await createService().sendMessage(123, 'mensaje');
 
@@ -38,9 +38,7 @@ describe('TelegramClientService external requests', () => {
   it('handles a Telegram timeout without throwing or logging raw errors', async () => {
     const timeout = new Error('sensitive provider details');
     timeout.name = 'TimeoutError';
-    global.fetch = jest
-      .fn()
-      .mockRejectedValue(timeout) as unknown as typeof fetch;
+    global.fetch = jest.fn().mockRejectedValue(timeout);
     const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
 
     await expect(

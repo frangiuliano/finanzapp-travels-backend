@@ -133,7 +133,7 @@ describe('IncomesService', () => {
 
     it('should require boardId', async () => {
       await expect(
-        service.create({ amount: 100, label: 'Test' } as never, userId),
+        service.create({ amount: 100, label: 'Test' }, userId),
       ).rejects.toThrow(BadRequestException);
     });
 

@@ -4,7 +4,7 @@ function idString(value: unknown): string {
   if (value instanceof Types.ObjectId) return value.toString();
   if (typeof value === 'string') return value;
   if (value && typeof value === 'object' && '_id' in value) {
-    return idString((value as { _id: unknown })._id);
+    return idString(value._id);
   }
   return '';
 }

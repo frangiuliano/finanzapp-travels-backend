@@ -64,8 +64,7 @@ export class UpdateSavingsGoalDto {
 export class CreateGoalContributionDto {
   @IsMongoId() holdingId: string;
   @IsIn([WealthEventKind.CONTRIBUTION, WealthEventKind.WITHDRAWAL]) kind:
-    | WealthEventKind.CONTRIBUTION
-    | WealthEventKind.WITHDRAWAL;
+    WealthEventKind.CONTRIBUTION | WealthEventKind.WITHDRAWAL;
   @IsNumber() @Min(0.01) amount: number;
   @IsOptional() @IsString() @MaxLength(200) note?: string;
   @IsOptional() @IsDateString() occurredAt?: string;

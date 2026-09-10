@@ -1202,8 +1202,7 @@ export class ExpensesService implements OnModuleInit {
       }
 
       const budgetIdObj = exp.budgetId as
-        | Types.ObjectId
-        | { _id: Types.ObjectId; name: string };
+        Types.ObjectId | { _id: Types.ObjectId; name: string };
 
       if (
         budgetIdObj &&
@@ -1211,10 +1210,7 @@ export class ExpensesService implements OnModuleInit {
         'name' in budgetIdObj &&
         '_id' in budgetIdObj
       ) {
-        const populatedBudget = budgetIdObj as {
-          _id: Types.ObjectId;
-          name: string;
-        };
+        const populatedBudget = budgetIdObj;
         const budgetId = populatedBudget._id.toString();
         const budgetName = populatedBudget.name || 'Sin nombre';
         const current = budgetMap.get(budgetId) || {
@@ -1395,8 +1391,7 @@ export class ExpensesService implements OnModuleInit {
     expenses.forEach((exp) => {
       if (exp.paidByParticipantId) {
         const paidByObj = exp.paidByParticipantId as
-          | Types.ObjectId
-          | { _id: Types.ObjectId };
+          Types.ObjectId | { _id: Types.ObjectId };
         const payerId =
           paidByObj && typeof paidByObj === 'object' && '_id' in paidByObj
             ? paidByObj._id.toString()
@@ -1942,8 +1937,7 @@ export class ExpensesService implements OnModuleInit {
     expense: Record<string, unknown>,
   ): PaymentMethodFxContext | null {
     const detail = expense.paymentMethodDetail as
-      | { kind?: PaymentMethodKind; closingDay?: number }
-      | undefined;
+      { kind?: PaymentMethodKind; closingDay?: number } | undefined;
     if (!detail?.kind) {
       return null;
     }

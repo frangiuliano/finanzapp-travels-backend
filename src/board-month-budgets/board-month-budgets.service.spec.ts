@@ -196,7 +196,7 @@ describe('BoardMonthBudgetsService', () => {
             categoryId: categoryId.toString(),
             yearMonth: '2026-07',
             limit: 50000,
-          } as never,
+          },
           userId,
         ),
       ).rejects.toThrow(BadRequestException);

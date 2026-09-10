@@ -313,7 +313,7 @@ export class StatementImportsService {
         duplicateOfAmount: match?.amount,
         duplicateOfDate: match?.expenseDate.toISOString().slice(0, 10),
         rawText: line.rawText,
-      } as StatementImportLine;
+      };
     });
   }
 }
