@@ -122,17 +122,17 @@ describe('ReportsService', () => {
           categoryId: categoryId.toString(),
           categoryName: 'Comida',
           total: 200,
-          count: 1,
+          count: 2,
+          otherCurrencyTotals: [{ currency: 'USD', total: 50, count: 1 }],
         },
       ]);
       expect(report.byPaymentMethod[0].paymentMethodName).toBe('Visa');
-      expect(report.excludedDueToCurrencyMismatch).toEqual({
-        incomes: 0,
-        expenses: 1,
-      });
+      expect(report.expensesByCurrency).toEqual([
+        { currency: 'USD', total: 50, count: 1 },
+      ]);
     });
 
-    it('should include cross-currency expenses with FX snapshot in totals', async () => {
+    it('should keep cross-currency expenses discriminated instead of converting them into the total', async () => {
       incomeModel.find.mockReturnValue({
         lean: jest.fn().mockResolvedValue([]),
       });
@@ -177,8 +177,10 @@ describe('ReportsService', () => {
         userId,
       );
 
-      expect(report.totalExpenses).toBe(1200);
-      expect(report.excludedDueToCurrencyMismatch.expenses).toBe(0);
+      expect(report.totalExpenses).toBe(200);
+      expect(report.expensesByCurrency).toEqual([
+        { currency: 'USD', total: 10, count: 1 },
+      ]);
     });
 
     it('should require participant access', async () => {
@@ -214,7 +216,8 @@ describe('ReportsService', () => {
           remaining: 600,
           byCategory: [],
           byPaymentMethod: [],
-          excludedDueToCurrencyMismatch: { incomes: 0, expenses: 0 },
+          incomesByCurrency: [],
+          expensesByCurrency: [],
         })
         .mockResolvedValueOnce({
           boardId: board2Id.toString(),
@@ -225,7 +228,8 @@ describe('ReportsService', () => {
           remaining: 400,
           byCategory: [],
           byPaymentMethod: [],
-          excludedDueToCurrencyMismatch: { incomes: 0, expenses: 0 },
+          incomesByCurrency: [],
+          expensesByCurrency: [],
         });
 
       const report = await service.getConsolidatedReport('2026-07', userId);
@@ -260,7 +264,8 @@ describe('ReportsService', () => {
           remaining: 600,
           byCategory: [],
           byPaymentMethod: [],
-          excludedDueToCurrencyMismatch: { incomes: 0, expenses: 0 },
+          incomesByCurrency: [],
+          expensesByCurrency: [],
         });
 
       const report = await service.getConsolidatedReport('2026-07', userId, [

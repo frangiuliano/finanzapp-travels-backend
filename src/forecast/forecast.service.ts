@@ -10,13 +10,16 @@ import {
   shiftYearMonth,
 } from '../common/utils/parse-year-month';
 import { splitInstallmentAmounts } from '../common/utils/split-installment-amounts';
+import {
+  CurrencyBreakdownBuilder,
+  CurrencyBreakdownEntry,
+} from '../common/utils/currency-breakdown';
 import { Income, IncomeDocument, IncomeStatus } from '../incomes/income.schema';
 import {
   Expense,
   ExpenseDocument,
   ExpenseStatus,
 } from '../expenses/expense.schema';
-import { ExpenseFxResolver } from '../fx/expense-fx.resolver';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 
 function getDocumentId(doc: unknown): string {
@@ -78,6 +81,8 @@ export interface MonthlyForecast {
     totalIncomes: number;
     totalExpenses: number;
     remaining: number;
+    incomesByCurrency: CurrencyBreakdownEntry[];
+    expensesByCurrency: CurrencyBreakdownEntry[];
   };
   planned: {
     incomes: ForecastLineItem[];
@@ -86,6 +91,8 @@ export interface MonthlyForecast {
     totalIncomes: number;
     totalOutflows: number;
     projectedRemaining: number;
+    incomesByCurrency: CurrencyBreakdownEntry[];
+    outflowsByCurrency: CurrencyBreakdownEntry[];
   };
 }
 
@@ -95,7 +102,6 @@ export class ForecastService {
     private incomesService: IncomesService,
     private installmentPlansService: InstallmentPlansService,
     private materializationService: RecurringMaterializationService,
-    private expenseFxResolver: ExpenseFxResolver,
     private paymentMethodsService: PaymentMethodsService,
     @InjectModel(Income.name)
     private incomeModel: Model<IncomeDocument>,
@@ -151,12 +157,15 @@ export class ForecastService {
     ]);
 
     const plannedIncomes: ForecastLineItem[] = [];
-    let plannedIncomeTotal = 0;
+    const plannedIncomeTotals = new CurrencyBreakdownBuilder();
 
     for (const income of materializedIncomes) {
-      if (income.currency !== boardCurrency) continue;
       if (income.status !== IncomeStatus.PENDING) continue;
 
+      plannedIncomeTotals.add(income.currency, income.amount);
+
+      // Each item keeps its own currency — never converted — so the
+      // itemized list and the headline total agree on what's actually owed.
       plannedIncomes.push({
         id: getDocumentId(income),
         label: income.label,
@@ -166,35 +175,29 @@ export class ForecastService {
         kind: 'recurring-income',
         status: 'pending',
       });
-
-      plannedIncomeTotal += income.amount;
     }
 
     const plannedFixedExpenses: ForecastLineItem[] = [];
-    let plannedFixedTotal = 0;
+    const plannedFixedTotals = new CurrencyBreakdownBuilder();
 
     for (const expense of materializedExpenses) {
       if (expense.status !== ExpenseStatus.PENDING) continue;
 
-      const amountInBoard = this.expenseFxResolver.getAmountInBoardCurrency(
-        expense,
-        boardCurrency,
-      );
-      if (amountInBoard == null) continue;
+      plannedFixedTotals.add(expense.currency, expense.amount);
 
       plannedFixedExpenses.push({
         id: getDocumentId(expense),
-        label: expense.description,
-        amount: amountInBoard,
-        currency: boardCurrency,
+        label: expense.description || 'Gasto',
+        amount: expense.amount,
+        currency: expense.currency,
         dayOfMonth: getDayFromDate(new Date(expense.expenseDate)),
         kind: 'recurring-expense',
         status: 'pending',
       });
-
-      plannedFixedTotal += amountInBoard;
     }
 
+    const plannedIncomeTotal = plannedIncomeTotals.totalFor(boardCurrency);
+    const plannedFixedTotal = plannedFixedTotals.totalFor(boardCurrency);
     const plannedInstallments: ForecastLineItem[] = [];
     const totalPlannedOutflows = plannedFixedTotal;
 
@@ -210,6 +213,8 @@ export class ForecastService {
         totalIncomes: actualSummary.totalIncomes,
         totalExpenses: actualSummary.totalExpenses,
         remaining: actualSummary.remaining,
+        incomesByCurrency: actualSummary.incomesByCurrency,
+        expensesByCurrency: actualSummary.expensesByCurrency,
       },
       planned: {
         incomes: plannedIncomes,
@@ -218,6 +223,8 @@ export class ForecastService {
         totalIncomes: plannedIncomeTotal,
         totalOutflows: totalPlannedOutflows,
         projectedRemaining,
+        incomesByCurrency: plannedIncomeTotals.otherThan(boardCurrency),
+        outflowsByCurrency: plannedFixedTotals.otherThan(boardCurrency),
       },
     };
   }

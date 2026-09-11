@@ -1,5 +1,6 @@
 import {
   IsOptional,
+  IsNotEmpty,
   IsString,
   IsNumber,
   IsMongoId,
@@ -10,7 +11,6 @@ import {
   IsIn,
   Matches,
   Min,
-  MinLength,
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -45,13 +45,13 @@ export class UpdateExpenseDto {
 
   @IsOptional()
   @IsString({ message: 'La descripción debe ser texto' })
-  @MinLength(3, { message: 'La descripción debe tener al menos 3 caracteres' })
   @MaxLength(500, {
     message: 'La descripción no puede tener más de 500 caracteres',
   })
   description?: string;
 
   @IsOptional()
+  @IsNotEmpty({ message: 'El comercio es obligatorio' })
   @IsString({ message: 'El nombre del comercio debe ser texto' })
   @MaxLength(100, {
     message: 'El nombre del comercio no puede tener más de 100 caracteres',

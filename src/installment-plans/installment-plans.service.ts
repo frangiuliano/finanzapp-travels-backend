@@ -410,7 +410,7 @@ export class InstallmentPlansService {
         .sort((a, b) => (a.installmentNumber ?? 0) - (b.installmentNumber ?? 0))
         .map((expense) => ({
           installmentNumber: expense.installmentNumber ?? 0,
-          description: expense.description,
+          description: expense.description ?? '',
           amount: expense.amount,
           currency: expense.currency,
           overriddenFields:

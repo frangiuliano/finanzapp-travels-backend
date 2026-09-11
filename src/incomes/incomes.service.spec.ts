@@ -283,10 +283,12 @@ describe('IncomesService', () => {
       expect(summary.remaining).toBe(3800);
       expect(summary.currency).toBe('ARS');
       expect(summary.yearMonth).toBe('2026-07');
-      expect(summary.excludedDueToCurrencyMismatch).toEqual({
-        incomes: 1,
-        expenses: 1,
-      });
+      expect(summary.incomesByCurrency).toEqual([
+        { currency: 'USD', total: 100, count: 1 },
+      ]);
+      expect(summary.expensesByCurrency).toEqual([
+        { currency: 'USD', total: 50, count: 1 },
+      ]);
     });
 
     it('should reject invalid yearMonth', async () => {

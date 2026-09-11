@@ -14,14 +14,19 @@ import { BoardsService } from '../trips/trips.service';
 import { Board, BoardType } from '../trips/board.schema';
 import { parseYearMonth } from '../common/utils/parse-year-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
-import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
+import {
+  CurrencyBreakdownBuilder,
+  CurrencyBreakdownEntry,
+} from '../common/utils/currency-breakdown';
 
 export interface CategoryBreakdownItem {
   categoryId: string | null;
   categoryName: string;
   total: number;
   count: number;
+  /** Totals in other currencies are never converted into `total` — shown alongside it instead. */
+  otherCurrencyTotals: CurrencyBreakdownEntry[];
 }
 
 export interface PaymentMethodBreakdownItem {
@@ -30,6 +35,8 @@ export interface PaymentMethodBreakdownItem {
   kind: PaymentMethodKind | null;
   total: number;
   count: number;
+  /** Totals in other currencies are never converted into `total` — shown alongside it instead. */
+  otherCurrencyTotals: CurrencyBreakdownEntry[];
 }
 
 export interface BoardCalendarReport {
@@ -41,10 +48,9 @@ export interface BoardCalendarReport {
   remaining: number;
   byCategory: CategoryBreakdownItem[];
   byPaymentMethod: PaymentMethodBreakdownItem[];
-  excludedDueToCurrencyMismatch: {
-    incomes: number;
-    expenses: number;
-  };
+  /** Totals in other currencies are never converted — shown separately, not blended into the board currency. */
+  incomesByCurrency: CurrencyBreakdownEntry[];
+  expensesByCurrency: CurrencyBreakdownEntry[];
 }
 
 export interface ConsolidatedBoardSummary {
@@ -134,19 +140,13 @@ export class ReportsService {
         .lean(),
     ]);
 
-    let totalIncomes = 0;
-    let excludedIncomes = 0;
+    const incomeTotals = new CurrencyBreakdownBuilder();
     for (const income of incomes) {
-      if (income.currency === boardCurrency) {
-        totalIncomes += income.amount;
-      } else {
-        excludedIncomes += 1;
-      }
+      incomeTotals.add(income.currency, income.amount);
     }
 
-    let totalExpenses = 0;
-    let excludedExpenses = 0;
-    const convertibleExpenses: Expense[] = [];
+    const expenseTotals = new CurrencyBreakdownBuilder();
+    const attributedExpenses: Expense[] = [];
 
     const participantByBoardId = new Map(
       scopeContext.map((item) => [
@@ -171,25 +171,20 @@ export class ReportsService {
         : sourceExpense.amount;
       if (attributedAmount <= 0) continue;
       const expense = { ...sourceExpense, amount: attributedAmount };
-      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
-        expense,
-        boardCurrency,
-      );
-      if (amountInBoardCurrency == null) {
-        excludedExpenses += 1;
-        continue;
-      }
-      totalExpenses += amountInBoardCurrency;
-      convertibleExpenses.push(expense);
+      expenseTotals.add(expense.currency, attributedAmount);
+      attributedExpenses.push(expense);
     }
+
+    const totalIncomes = incomeTotals.totalFor(boardCurrency);
+    const totalExpenses = expenseTotals.totalFor(boardCurrency);
 
     const [byCategory, byPaymentMethod] = await Promise.all([
       this.buildCategoryBreakdown(
         boardObjectIds,
-        convertibleExpenses,
+        attributedExpenses,
         boardCurrency,
       ),
-      this.buildPaymentMethodBreakdown(convertibleExpenses, boardCurrency),
+      this.buildPaymentMethodBreakdown(attributedExpenses, boardCurrency),
     ]);
 
     return {
@@ -201,10 +196,8 @@ export class ReportsService {
       remaining: totalIncomes - totalExpenses,
       byCategory,
       byPaymentMethod,
-      excludedDueToCurrencyMismatch: {
-        incomes: excludedIncomes,
-        expenses: excludedExpenses,
-      },
+      incomesByCurrency: incomeTotals.otherThan(boardCurrency),
+      expensesByCurrency: expenseTotals.otherThan(boardCurrency),
     };
   }
 
@@ -293,21 +286,13 @@ export class ReportsService {
     expenses: Expense[],
     boardCurrency: string,
   ): Promise<CategoryBreakdownItem[]> {
-    const totals = new Map<string | null, { total: number; count: number }>();
+    const totals = new Map<string | null, CurrencyBreakdownBuilder>();
 
     for (const expense of expenses) {
-      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
-        expense,
-        boardCurrency,
-      );
-      if (amountInBoardCurrency == null) {
-        continue;
-      }
       const key = expense.categoryId?.toString() ?? null;
-      const current = totals.get(key) ?? { total: 0, count: 0 };
-      current.total += amountInBoardCurrency;
-      current.count += 1;
-      totals.set(key, current);
+      const builder = totals.get(key) ?? new CurrencyBreakdownBuilder();
+      builder.add(expense.currency, expense.amount);
+      totals.set(key, builder);
     }
 
     const categoryIds = [...totals.keys()].filter(
@@ -328,14 +313,15 @@ export class ReportsService {
     );
 
     const items: CategoryBreakdownItem[] = [];
-    for (const [categoryId, data] of totals.entries()) {
+    for (const [categoryId, builder] of totals.entries()) {
       items.push({
         categoryId,
         categoryName: categoryId
           ? (categoryNameById.get(categoryId) ?? 'Categoría eliminada')
           : 'Sin categoría',
-        total: data.total,
-        count: data.count,
+        total: builder.totalFor(boardCurrency),
+        count: builder.totalCount(),
+        otherCurrencyTotals: builder.otherThan(boardCurrency),
       });
     }
 
@@ -346,21 +332,13 @@ export class ReportsService {
     expenses: Expense[],
     boardCurrency: string,
   ): Promise<PaymentMethodBreakdownItem[]> {
-    const totals = new Map<string | null, { total: number; count: number }>();
+    const totals = new Map<string | null, CurrencyBreakdownBuilder>();
 
     for (const expense of expenses) {
-      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
-        expense,
-        boardCurrency,
-      );
-      if (amountInBoardCurrency == null) {
-        continue;
-      }
       const key = resolveExpensePaymentMethodId(expense);
-      const current = totals.get(key) ?? { total: 0, count: 0 };
-      current.total += amountInBoardCurrency;
-      current.count += 1;
-      totals.set(key, current);
+      const builder = totals.get(key) ?? new CurrencyBreakdownBuilder();
+      builder.add(expense.currency, expense.amount);
+      totals.set(key, builder);
     }
 
     const paymentMethodIds = [...totals.keys()].filter(
@@ -382,7 +360,7 @@ export class ReportsService {
     );
 
     const items: PaymentMethodBreakdownItem[] = [];
-    for (const [paymentMethodId, data] of totals.entries()) {
+    for (const [paymentMethodId, builder] of totals.entries()) {
       const method = paymentMethodId
         ? methodById.get(paymentMethodId)
         : undefined;
@@ -390,8 +368,9 @@ export class ReportsService {
         paymentMethodId,
         paymentMethodName: method?.name ?? 'Sin medio de pago',
         kind: method?.kind ?? null,
-        total: data.total,
-        count: data.count,
+        total: builder.totalFor(boardCurrency),
+        count: builder.totalCount(),
+        otherCurrencyTotals: builder.otherThan(boardCurrency),
       });
     }
 

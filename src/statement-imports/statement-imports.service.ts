@@ -273,7 +273,7 @@ export class StatementImportsService {
       id: expense._id.toString(),
       amount: expense.amount,
       currency: expense.currency,
-      description: expense.description,
+      description: expense.description ?? '',
       merchantName: expense.merchantName,
       expenseDate: expense.expenseDate,
     }));

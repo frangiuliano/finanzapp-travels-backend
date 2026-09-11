@@ -71,9 +71,11 @@ export class Expense {
   @Prop({ required: false, match: /^\d{4}-(0[1-9]|1[0-2])$/ })
   paymentYearMonth?: string;
 
-  @Prop({ required: true, minlength: 3, maxlength: 500 })
-  description: string;
+  @Prop({ required: false, minlength: 3, maxlength: 500 })
+  description?: string;
 
+  // Mandatory only for manually created expenses (enforced in CreateExpenseDto);
+  // recurring/installment materialization does not carry a merchant concept.
   @Prop({ required: false, maxlength: 100 })
   merchantName?: string;
 

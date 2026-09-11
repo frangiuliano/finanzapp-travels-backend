@@ -12,7 +12,6 @@ import {
   IsUUID,
   Matches,
   Min,
-  MinLength,
   MaxLength,
   ValidateIf,
 } from 'class-validator';
@@ -53,15 +52,17 @@ export class CreateExpenseDto {
   @Min(0.000001, { message: 'fxRateOverride debe ser mayor a 0' })
   fxRateOverride?: number;
 
-  @IsNotEmpty({ message: 'La descripción es obligatoria' })
+  @IsOptional()
   @IsString({ message: 'La descripción debe ser texto' })
-  @MinLength(3, { message: 'La descripción debe tener al menos 3 caracteres' })
   @MaxLength(500, {
     message: 'La descripción no puede tener más de 500 caracteres',
   })
-  description: string;
+  description?: string;
 
-  @IsOptional()
+  // Optional at the type level so internal callers that don't have a
+  // merchant concept (bot, recurring/installment materialization) can still
+  // build this DTO; enforced as mandatory for HTTP requests via IsNotEmpty.
+  @IsNotEmpty({ message: 'El comercio es obligatorio' })
   @IsString({ message: 'El nombre del comercio debe ser texto' })
   @MaxLength(100, {
     message: 'El nombre del comercio no puede tener más de 100 caracteres',

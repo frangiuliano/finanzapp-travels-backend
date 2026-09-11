@@ -19,8 +19,11 @@ import { BoardsService } from '../trips/trips.service';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { parseYearMonth } from '../common/utils/parse-year-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
-import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
+import {
+  CurrencyBreakdownBuilder,
+  CurrencyBreakdownEntry,
+} from '../common/utils/currency-breakdown';
 import { BoardType } from '../trips/board.schema';
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
@@ -32,14 +35,9 @@ export interface MonthlyBoardSummary {
   totalIncomes: number;
   totalExpenses: number;
   remaining: number;
-  /**
-   * Incomes in other currencies are still excluded until income FX is added.
-   * Expenses use FX snapshot when available (issue #9).
-   */
-  excludedDueToCurrencyMismatch: {
-    incomes: number;
-    expenses: number;
-  };
+  /** Totals in other currencies are never converted — shown separately, not blended into the board currency. */
+  incomesByCurrency: CurrencyBreakdownEntry[];
+  expensesByCurrency: CurrencyBreakdownEntry[];
 }
 
 function parseIncomeDate(value: string): Date {
@@ -262,18 +260,12 @@ export class IncomesService {
       this.expenseModel.find(expenseQuery).lean(),
     ]);
 
-    let totalIncomes = 0;
-    let excludedIncomes = 0;
+    const incomeTotals = new CurrencyBreakdownBuilder();
     for (const income of incomes) {
-      if (income.currency === boardCurrency) {
-        totalIncomes += income.amount;
-      } else {
-        excludedIncomes += 1;
-      }
+      incomeTotals.add(income.currency, income.amount);
     }
 
-    let totalExpenses = 0;
-    let excludedExpenses = 0;
+    const expenseTotals = new CurrencyBreakdownBuilder();
     const participantByBoardId = new Map(
       expenseScope.map((item) => [
         item.board._id.toString(),
@@ -295,18 +287,11 @@ export class IncomesService {
           )
         : sourceExpense.amount;
       if (attributedAmount <= 0) continue;
-      const expense = { ...sourceExpense, amount: attributedAmount };
-
-      const amountInBoardCurrency = getExpenseAmountInBoardCurrency(
-        expense,
-        boardCurrency,
-      );
-      if (amountInBoardCurrency == null) {
-        excludedExpenses += 1;
-        continue;
-      }
-      totalExpenses += amountInBoardCurrency;
+      expenseTotals.add(sourceExpense.currency, attributedAmount);
     }
+
+    const totalIncomes = incomeTotals.totalFor(boardCurrency);
+    const totalExpenses = expenseTotals.totalFor(boardCurrency);
 
     return {
       boardId,
@@ -315,10 +300,8 @@ export class IncomesService {
       totalIncomes,
       totalExpenses,
       remaining: totalIncomes - totalExpenses,
-      excludedDueToCurrencyMismatch: {
-        incomes: excludedIncomes,
-        expenses: excludedExpenses,
-      },
+      incomesByCurrency: incomeTotals.otherThan(boardCurrency),
+      expensesByCurrency: expenseTotals.otherThan(boardCurrency),
     };
   }
 }
