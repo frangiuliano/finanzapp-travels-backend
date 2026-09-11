@@ -51,6 +51,7 @@ describe('InstallmentPlansService.update (unified save)', () => {
     installmentAmount?: number;
     label?: string;
     paymentMethodId?: Types.ObjectId | null;
+    paidInstallments?: number;
     expenses: FakeExpense[];
   }) {
     const plan = {
@@ -59,7 +60,7 @@ describe('InstallmentPlansService.update (unified save)', () => {
       label: options.label ?? 'Compra en cuotas',
       installmentAmount: options.installmentAmount ?? 1000,
       totalInstallments: options.totalInstallments,
-      paidInstallments: 0,
+      paidInstallments: options.paidInstallments ?? 0,
       startYearMonth: options.startYearMonth ?? '2026-09',
       dayOfMonth: options.dayOfMonth,
       paymentMethodId: options.paymentMethodId ?? paymentMethodId,
@@ -100,10 +101,20 @@ describe('InstallmentPlansService.update (unified save)', () => {
         Promise.resolve(expensesByKey.get(occurrenceKey) ?? null),
       ),
       countDocuments: jest.fn(
-        (query: { status?: ExpenseStatus; skippedAt?: unknown }) => {
+        (query: {
+          status?: ExpenseStatus;
+          skippedAt?: unknown;
+          installmentNumber?: { $gt?: number };
+        }) => {
           const all = Array.from(expensesByKey.values());
           return Promise.resolve(
-            all.filter((e) => e.status === query.status && !e.skippedAt).length,
+            all.filter(
+              (e) =>
+                e.status === query.status &&
+                !e.skippedAt &&
+                (query.installmentNumber?.$gt === undefined ||
+                  e.installmentNumber > query.installmentNumber.$gt),
+            ).length,
           );
         },
       ),
@@ -123,7 +134,40 @@ describe('InstallmentPlansService.update (unified save)', () => {
         expensesByKey.set(created.occurrenceKey, created);
         return Promise.resolve(created);
       }),
-      deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
+      deleteMany: jest.fn(
+        (query: {
+          installmentNumber?: { $gt?: number; $lte?: number };
+          status?: { $ne?: ExpenseStatus };
+          skippedAt?: unknown;
+        }) => {
+          let deletedCount = 0;
+          for (const [key, expense] of Array.from(expensesByKey.entries())) {
+            const n = expense.installmentNumber;
+            if (
+              query.installmentNumber?.$gt !== undefined &&
+              !(n > query.installmentNumber.$gt)
+            ) {
+              continue;
+            }
+            if (
+              query.installmentNumber?.$lte !== undefined &&
+              !(n <= query.installmentNumber.$lte)
+            ) {
+              continue;
+            }
+            if (
+              query.status?.$ne !== undefined &&
+              expense.status === query.status.$ne
+            ) {
+              continue;
+            }
+            if (expense.skippedAt) continue;
+            expensesByKey.delete(key);
+            deletedCount += 1;
+          }
+          return Promise.resolve({ deletedCount });
+        },
+      ),
       updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
     };
 
@@ -379,5 +423,98 @@ describe('InstallmentPlansService.update (unified save)', () => {
     if (preflight.status !== 'needs_decision') throw new Error('unreachable');
     expect(preflight.customOverrides.count).toBe(1);
     expect(preflight.customOverrides.items[0].amount).toBe(3333);
+  });
+
+  describe('editing paidInstallments (the "already paid before tracking" seed)', () => {
+    it('rejects a value greater than the resulting totalInstallments', async () => {
+      const { service } = buildHarness({
+        totalInstallments: 3,
+        dayOfMonth: 28,
+        paidInstallments: 0,
+        expenses: [],
+      });
+
+      await expect(
+        service.update(
+          planId.toString(),
+          { paidInstallments: 5 },
+          userId.toString(),
+        ),
+      ).rejects.toThrow('paidInstallments no puede superar totalInstallments');
+    });
+
+    it('raising it deletes stale pending cuotas that fall inside the new seed range, never touching paid ones', async () => {
+      const cuota1 = makeExpense({
+        installmentNumber: 1,
+        occurrenceKey: `installment:${planId.toString()}:1`,
+        status: ExpenseStatus.PENDING,
+      });
+      const cuota2 = makeExpense({
+        installmentNumber: 2,
+        occurrenceKey: `installment:${planId.toString()}:2`,
+        status: ExpenseStatus.PAID,
+      });
+      const cuota3 = makeExpense({
+        installmentNumber: 3,
+        occurrenceKey: `installment:${planId.toString()}:3`,
+        status: ExpenseStatus.PENDING,
+        expenseDate: new Date('2026-11-28T12:00:00.000Z'),
+      });
+      const { service, expensesByKey } = buildHarness({
+        totalInstallments: 3,
+        dayOfMonth: 28,
+        paidInstallments: 0,
+        expenses: [cuota1, cuota2, cuota3],
+      });
+
+      const result = await service.update(
+        planId.toString(),
+        { paidInstallments: 2 },
+        userId.toString(),
+      );
+
+      expect(result.status).toBe('applied');
+      // Pending cuota inside the new seed range: dropped, not resurrected.
+      expect(expensesByKey.has(`installment:${planId.toString()}:1`)).toBe(
+        false,
+      );
+      // Already-paid cuota inside the new seed range: paid history untouched.
+      expect(expensesByKey.has(`installment:${planId.toString()}:2`)).toBe(
+        true,
+      );
+      // Beyond the seed: unaffected.
+      expect(expensesByKey.has(`installment:${planId.toString()}:3`)).toBe(
+        true,
+      );
+    });
+
+    it('lowering it materializes newly-unseeded cuotas via the normal reconcile pass', async () => {
+      const cuota3 = makeExpense({
+        installmentNumber: 3,
+        occurrenceKey: `installment:${planId.toString()}:3`,
+        status: ExpenseStatus.PENDING,
+        expenseDate: new Date('2026-11-28T12:00:00.000Z'),
+      });
+      const { service, expensesByKey } = buildHarness({
+        totalInstallments: 3,
+        dayOfMonth: 28,
+        paidInstallments: 2,
+        expenses: [cuota3],
+      });
+
+      const result = await service.update(
+        planId.toString(),
+        { paidInstallments: 0 },
+        userId.toString(),
+      );
+
+      expect(result.status).toBe('applied');
+      expect(expensesByKey.has(`installment:${planId.toString()}:1`)).toBe(
+        true,
+      );
+      expect(expensesByKey.has(`installment:${planId.toString()}:2`)).toBe(
+        true,
+      );
+    });
   });
 });

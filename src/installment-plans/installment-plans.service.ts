@@ -259,11 +259,14 @@ export class InstallmentPlansService {
 
     const nextTotalInstallments =
       updateDto.totalInstallments ?? item.totalInstallments;
-    if (item.paidInstallments > nextTotalInstallments) {
+    const nextPaidInstallments =
+      updateDto.paidInstallments ?? item.paidInstallments;
+    if (nextPaidInstallments > nextTotalInstallments) {
       throw new BadRequestException(
         'paidInstallments no puede superar totalInstallments',
       );
     }
+    const previousPaidInstallments = item.paidInstallments;
 
     const amountOrLabelChanging =
       updateDto.installmentAmount !== undefined ||
@@ -296,6 +299,9 @@ export class InstallmentPlansService {
     if (updateDto.totalInstallments !== undefined) {
       item.totalInstallments = updateDto.totalInstallments;
     }
+    if (updateDto.paidInstallments !== undefined) {
+      item.paidInstallments = updateDto.paidInstallments;
+    }
     if (updateDto.startYearMonth !== undefined) {
       item.startYearMonth = updateDto.startYearMonth;
     }
@@ -314,6 +320,23 @@ export class InstallmentPlansService {
     }
 
     const saved = await item.save();
+
+    if (
+      updateDto.paidInstallments !== undefined &&
+      updateDto.paidInstallments !== previousPaidInstallments
+    ) {
+      // Raising the seed means cuotas now inside it were actually paid
+      // before this plan started being tracked — any still-pending
+      // materialization of them is stale and gets dropped. Paid history is
+      // never touched here; lowering the seed is handled below by
+      // reconcileExpenseOccurrences, which fills in newly-unseeded cuotas.
+      await this.expenseModel.deleteMany({
+        installmentPlanId: saved._id,
+        installmentNumber: { $lte: saved.paidInstallments },
+        status: { $ne: ExpenseStatus.PAID },
+        skippedAt: { $exists: false },
+      });
+    }
 
     if (updateDto.categoryId !== undefined) {
       // Category applies to every cuota of the plan, paid or pending —
@@ -578,6 +601,10 @@ export class InstallmentPlansService {
       const existing = await this.expenseModel.findOne({ occurrenceKey });
 
       if (!existing) {
+        // Seeded cuotas (paid before this plan started being tracked) are
+        // never materialized — only cuotas past the seed get created here.
+        if (installmentNumber <= plan.paidInstallments) continue;
+
         const expenseDate = buildOccurrenceDate(yearMonth, plan.dayOfMonth);
         const status =
           expenseDate <= now ? ExpenseStatus.PAID : ExpenseStatus.PENDING;

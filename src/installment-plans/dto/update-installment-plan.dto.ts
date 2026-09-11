@@ -38,6 +38,12 @@ export class UpdateInstallmentPlanDto {
   @Max(120)
   totalInstallments?: number;
 
+  /** Cuotas already paid before this plan started being tracked here. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  paidInstallments?: number;
+
   @IsOptional()
   @IsString()
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/)
