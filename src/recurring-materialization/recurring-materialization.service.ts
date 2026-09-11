@@ -819,6 +819,25 @@ export class RecurringMaterializationService {
     });
   }
 
+  /**
+   * Called when a rule's dayOfMonth changes. Pending occurrences were
+   * materialized under the old day's occurrenceKey, so ensureHorizon would
+   * otherwise generate new ones for the new day alongside them, duplicating
+   * the expense. Paid history is untouched (status filter).
+   */
+  async removePendingExpensesForDayChange(
+    recurringExpenseId: string,
+  ): Promise<void> {
+    const rule = await this.recurringExpenseModel.findById(recurringExpenseId);
+    if (!rule) return;
+
+    await this.expenseModel.deleteMany({
+      recurringExpenseId: rule._id,
+      status: ExpenseStatus.PENDING,
+      skippedAt: { $exists: false },
+    });
+  }
+
   private getMonthDateRange(yearMonth: string): {
     from: Date;
     toExclusive: Date;

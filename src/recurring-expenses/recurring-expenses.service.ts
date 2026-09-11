@@ -171,8 +171,10 @@ export class RecurringExpensesService {
     if (updateDto.description !== undefined) {
       item.description = updateDto.description.trim();
     }
+    let dayOfMonthChanged = false;
     if (updateDto.dayOfMonth !== undefined) {
       assertValidDayOfMonth(updateDto.dayOfMonth);
+      dayOfMonthChanged = updateDto.dayOfMonth !== item.dayOfMonth;
       item.dayOfMonth = updateDto.dayOfMonth;
     }
     if (updateDto.categoryId !== undefined) {
@@ -228,6 +230,10 @@ export class RecurringExpensesService {
     }
 
     const saved = await item.save();
+
+    if (dayOfMonthChanged) {
+      await this.materializationService.removePendingExpensesForDayChange(id);
+    }
 
     await this.materializationService.ensureHorizon(boardId, userId);
 
