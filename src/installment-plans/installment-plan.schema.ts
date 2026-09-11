@@ -28,6 +28,9 @@ export class InstallmentPlan {
   @Prop({ type: Types.ObjectId, ref: 'PaymentMethod', required: false })
   paymentMethodId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'Category', required: false })
+  categoryId?: Types.ObjectId;
+
   @Prop({ required: true, default: 'USD' })
   currency: string;
 

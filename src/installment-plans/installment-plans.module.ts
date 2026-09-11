@@ -9,6 +9,7 @@ import {
 import { ParticipantsModule } from '../participants/participants.module';
 import { BoardsModule } from '../trips/trips.module';
 import { FxModule } from '../fx/fx.module';
+import { CategoriesModule } from '../categories/categories.module';
 import { Expense, ExpenseSchema } from '../expenses/expense.schema';
 import {
   Participant,
@@ -25,6 +26,7 @@ import {
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BoardsModule),
     FxModule,
+    CategoriesModule,
   ],
   controllers: [InstallmentPlansController],
   providers: [InstallmentPlansService],

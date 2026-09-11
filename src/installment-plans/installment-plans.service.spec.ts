@@ -46,6 +46,7 @@ describe('InstallmentPlansService materialization', () => {
       participantsService as never,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     await service.ensureExpenseOccurrences(
@@ -108,16 +109,24 @@ describe('InstallmentPlansService.findAllByBoard', () => {
     const installmentPlanModel = {
       find: jest.fn().mockReturnValue({
         sort: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue(plans),
+          populate: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue(plans),
+          }),
         }),
       }),
     };
     const expenseModel = {
-      aggregate: jest.fn().mockResolvedValue([
-        // Only the partially-seeded plan has anything materialized (cuotas
-        // 4..6), and only one of those has auto-transitioned to paid.
-        { _id: partiallySeededPlanId, count: 1 },
-      ]),
+      find: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          // Only the partially-seeded plan has anything materialized (cuotas
+          // 4..6), and only one of those has auto-transitioned to paid.
+          { installmentPlanId: partiallySeededPlanId, installmentNumber: 4 },
+          // Data artifact: a cuota inside the seed's own range (<=3) also
+          // ended up materialized and marked paid — must not be
+          // double-counted on top of the seed.
+          { installmentPlanId: partiallySeededPlanId, installmentNumber: 2 },
+        ]),
+      }),
     };
     const participantsService = {
       ensureParticipantAccess: jest.fn().mockResolvedValue(undefined),
@@ -128,6 +137,7 @@ describe('InstallmentPlansService.findAllByBoard', () => {
       expenseModel as never,
       {} as never,
       participantsService as never,
+      {} as never,
       {} as never,
       {} as never,
     );
@@ -193,6 +203,7 @@ describe('InstallmentPlansService.rescheduleInstallments', () => {
       expenseModel as never,
       {} as never,
       participantsService as never,
+      {} as never,
       {} as never,
       {} as never,
     );

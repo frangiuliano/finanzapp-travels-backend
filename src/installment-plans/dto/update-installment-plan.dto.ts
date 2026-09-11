@@ -48,6 +48,10 @@ export class UpdateInstallmentPlanDto {
   paymentMethodId?: string;
 
   @IsOptional()
+  @IsMongoId()
+  categoryId?: string;
+
+  @IsOptional()
   @IsString()
   @IsIn(SUPPORTED_CURRENCIES)
   currency?: string;

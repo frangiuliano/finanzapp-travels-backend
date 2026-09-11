@@ -68,9 +68,11 @@ describe('InstallmentPlansService.update (unified save)', () => {
       isActive: true,
       save: jest.fn(),
       toObject: jest.fn(),
+      populate: jest.fn(),
     };
     plan.save = jest.fn().mockImplementation(() => Promise.resolve(plan));
     plan.toObject = jest.fn().mockImplementation(() => ({ ...plan }));
+    plan.populate = jest.fn().mockImplementation(() => Promise.resolve(plan));
 
     const expensesByKey = new Map(
       options.expenses.map((expense) => [expense.occurrenceKey, expense]),
@@ -122,6 +124,7 @@ describe('InstallmentPlansService.update (unified save)', () => {
         return Promise.resolve(created);
       }),
       deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
+      updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
     };
 
     const participantModel = {
@@ -136,6 +139,7 @@ describe('InstallmentPlansService.update (unified save)', () => {
       expenseModel as never,
       participantModel as never,
       participantsService as never,
+      {} as never,
       {} as never,
       {} as never,
     );

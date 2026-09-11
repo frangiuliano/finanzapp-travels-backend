@@ -25,6 +25,7 @@ import {
 } from './dto/reschedule-installment.dto';
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
+import { CategoriesService } from '../categories/categories.service';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
 import { assertValidDayOfMonth } from '../common/utils/validate-day-of-month';
 import { parseYearMonth } from '../common/utils/parse-year-month';
@@ -60,7 +61,22 @@ export class InstallmentPlansService {
     private participantsService: ParticipantsService,
     private boardsService: BoardsService,
     private fxService: FxService,
+    private categoriesService: CategoriesService,
   ) {}
+
+  private async assertCategoryBelongsToBoard(
+    boardId: string,
+    categoryId: string,
+    userId: string,
+  ): Promise<void> {
+    const category = await this.categoriesService.findOne(categoryId, userId);
+    if (category.tripId.toString() !== boardId) {
+      throw new BadRequestException('La categoría no pertenece a este tablero');
+    }
+    if (!category.isActive) {
+      throw new BadRequestException('La categoría no está activa');
+    }
+  }
 
   async create(
     createDto: CreateInstallmentPlanDto,
@@ -85,6 +101,14 @@ export class InstallmentPlansService {
     const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
     const currency = createDto.currency ?? boardCurrency;
 
+    if (createDto.categoryId) {
+      await this.assertCategoryBelongsToBoard(
+        boardId,
+        createDto.categoryId,
+        userId,
+      );
+    }
+
     const fxSnapshot = await this.fxService.resolveSnapshot(
       currency,
       boardCurrency,
@@ -102,6 +126,9 @@ export class InstallmentPlansService {
       paymentMethodId: createDto.paymentMethodId
         ? new Types.ObjectId(createDto.paymentMethodId)
         : undefined,
+      categoryId: createDto.categoryId
+        ? new Types.ObjectId(createDto.categoryId)
+        : undefined,
       currency,
       fxRateToBoardCurrency:
         currency === boardCurrency
@@ -114,6 +141,7 @@ export class InstallmentPlansService {
 
     const saved = await plan.save();
     await this.syncExpenseOccurrences(saved, userId, false);
+    await saved.populate('categoryId', '_id name icon color isActive');
     this.logger.log(
       `Installment plan created: ${saved._id.toString()} on board ${boardId}`,
     );
@@ -129,6 +157,7 @@ export class InstallmentPlansService {
     const plans = await this.installmentPlanModel
       .find({ tripId: new Types.ObjectId(boardId) })
       .sort({ startYearMonth: 1, label: 1 })
+      .populate('categoryId', '_id name icon color isActive')
       .lean();
     if (plans.length === 0) return [];
 
@@ -138,21 +167,30 @@ export class InstallmentPlansService {
     // paidInstallments + 1). The live count only covers what got
     // materialized since, so the real total is the seed plus that live
     // count — never just the live count on its own.
-    const counts = await this.expenseModel.aggregate<{
-      _id: Types.ObjectId;
-      count: number;
-    }>([
-      {
-        $match: {
+    //
+    // Some legacy plans ended up with cuotas materialized inside the seed's
+    // own range too (a pre-existing data artifact), which would double-count
+    // if taken at face value — so only cuotas past the seed are counted live.
+    const paidExpenses = await this.expenseModel
+      .find(
+        {
           installmentPlanId: { $in: plans.map((plan) => plan._id) },
           status: ExpenseStatus.PAID,
         },
-      },
-      { $group: { _id: '$installmentPlanId', count: { $sum: 1 } } },
-    ]);
-    const paidCountByPlanId = new Map(
-      counts.map((entry) => [entry._id.toString(), entry.count]),
+        { installmentPlanId: 1, installmentNumber: 1 },
+      )
+      .lean();
+    const paidCountByPlanId = new Map<string, number>();
+    const paidInstallmentsByPlanId = new Map(
+      plans.map((plan) => [plan._id.toString(), plan.paidInstallments]),
     );
+    for (const expense of paidExpenses) {
+      if (!expense.installmentPlanId) continue;
+      const planId = expense.installmentPlanId.toString();
+      const seed = paidInstallmentsByPlanId.get(planId) ?? 0;
+      if ((expense.installmentNumber ?? 0) <= seed) continue;
+      paidCountByPlanId.set(planId, (paidCountByPlanId.get(planId) ?? 0) + 1);
+    }
 
     return plans.map((plan) => ({
       ...plan,
@@ -174,7 +212,10 @@ export class InstallmentPlansService {
   }
 
   async findOne(id: string, userId: string): Promise<InstallmentPlan> {
-    const item = await this.installmentPlanModel.findById(id).lean();
+    const item = await this.installmentPlanModel
+      .findById(id)
+      .populate('categoryId', '_id name icon color isActive')
+      .lean();
     if (!item) {
       throw new NotFoundException('Plan de cuotas no encontrado');
     }
@@ -207,6 +248,13 @@ export class InstallmentPlansService {
     }
     if (updateDto.dayOfMonth !== undefined) {
       assertValidDayOfMonth(updateDto.dayOfMonth);
+    }
+    if (updateDto.categoryId !== undefined) {
+      await this.assertCategoryBelongsToBoard(
+        item.tripId.toString(),
+        updateDto.categoryId,
+        userId,
+      );
     }
 
     const nextTotalInstallments =
@@ -261,8 +309,21 @@ export class InstallmentPlansService {
     }
     if (updateDto.currency !== undefined) item.currency = updateDto.currency;
     if (updateDto.isActive !== undefined) item.isActive = updateDto.isActive;
+    if (updateDto.categoryId !== undefined) {
+      item.categoryId = new Types.ObjectId(updateDto.categoryId);
+    }
 
     const saved = await item.save();
+
+    if (updateDto.categoryId !== undefined) {
+      // Category applies to every cuota of the plan, paid or pending —
+      // unlike amount/label, it's not something a single cuota customizes
+      // on its own, so there's no override to preserve.
+      await this.expenseModel.updateMany(
+        { installmentPlanId: saved._id },
+        { $set: { categoryId: saved.categoryId } },
+      );
+    }
 
     const reconciliation = await this.reconcileExpenseOccurrences(saved, {
       fallbackUserId: userId,
@@ -273,12 +334,17 @@ export class InstallmentPlansService {
 
     this.logger.log(`Installment plan updated: ${id}`);
 
+    // Only count cuotas past the seed's own range — see the matching comment
+    // in findAllByBoard for why a plan can have paid cuotas materialized
+    // inside that range too, which must not be double-counted here.
     const livePaidCount = await this.expenseModel.countDocuments({
       installmentPlanId: saved._id,
       status: ExpenseStatus.PAID,
       skippedAt: { $exists: false },
+      installmentNumber: { $gt: saved.paidInstallments },
     });
     const paidCount = saved.paidInstallments + livePaidCount;
+    await saved.populate('categoryId', '_id name icon color isActive');
 
     return {
       status: 'applied',
@@ -432,6 +498,7 @@ export class InstallmentPlansService {
             occurrenceKey,
             expenseDate,
             createdBy: plan.createdBy,
+            categoryId: plan.categoryId,
           },
         },
         { upsert: true },
@@ -536,6 +603,7 @@ export class InstallmentPlansService {
           occurrenceKey,
           expenseDate,
           createdBy: plan.createdBy,
+          categoryId: plan.categoryId,
         });
         continue;
       }
