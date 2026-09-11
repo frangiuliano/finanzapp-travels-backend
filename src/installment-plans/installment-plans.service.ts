@@ -444,14 +444,21 @@ export class InstallmentPlansService {
     boardId: string,
     userId: string,
   ): Promise<void> {
+    const t0 = Date.now();
     await this.participantsService.ensureParticipantAccess(boardId, userId);
     const plans = await this.installmentPlanModel.find({
       tripId: new Types.ObjectId(boardId),
       isActive: true,
     });
+    const t1 = Date.now();
 
     await Promise.all(
       plans.map((plan) => this.syncExpenseOccurrences(plan, userId, false)),
+    );
+    const t2 = Date.now();
+
+    this.logger.debug(
+      `[timing] ensureExpenseOccurrences board=${boardId} plans=${plans.length} findPlans=${t1 - t0}ms syncAll=${t2 - t1}ms total=${t2 - t0}ms`,
     );
   }
 

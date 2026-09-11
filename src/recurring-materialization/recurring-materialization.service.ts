@@ -86,12 +86,15 @@ export class RecurringMaterializationService {
     userId: string,
     monthsAhead = DEFAULT_RECURRING_HORIZON_MONTHS,
   ): Promise<{ generated: number; horizonEnd: string }> {
+    const t0 = Date.now();
     await this.participantsService.ensureParticipantAccess(boardId, userId);
+    const t1 = Date.now();
 
     const startMonth = getCurrentYearMonth();
     const endMonth = shiftYearMonth(startMonth, monthsAhead - 1);
 
     await this.migrateLegacyVersions(boardId, userId);
+    const t2 = Date.now();
 
     const boardObjectId = new Types.ObjectId(boardId);
     const [incomeRules, expenseRules] = await Promise.all([
@@ -102,6 +105,7 @@ export class RecurringMaterializationService {
         .find({ tripId: boardObjectId, isActive: true })
         .lean(),
     ]);
+    const t3 = Date.now();
 
     const [incomeGenerated, expenseGenerated] = await Promise.all([
       Promise.all(
@@ -115,6 +119,7 @@ export class RecurringMaterializationService {
         ),
       ).then((counts) => counts.reduce((sum, count) => sum + count, 0)),
     ]);
+    const t4 = Date.now();
 
     const generated = incomeGenerated + expenseGenerated;
 
@@ -127,6 +132,12 @@ export class RecurringMaterializationService {
         expenseDate: { $lte: new Date() },
       },
       { $set: { status: ExpenseStatus.PAID } },
+    );
+    const t5 = Date.now();
+
+    this.logger.debug(
+      `[timing] ensureHorizon board=${boardId} rules(income=${incomeRules.length},expense=${expenseRules.length}) ` +
+        `participantAccess=${t1 - t0}ms migrateLegacy=${t2 - t1}ms findRules=${t3 - t2}ms generateOccurrences=${t4 - t3}ms updateManyPaid=${t5 - t4}ms total=${t5 - t0}ms`,
     );
 
     return { generated, horizonEnd: endMonth };

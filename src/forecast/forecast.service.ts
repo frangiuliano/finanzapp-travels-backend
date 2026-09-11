@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { IncomesService } from '../incomes/incomes.service';
@@ -98,6 +98,8 @@ export interface MonthlyForecast {
 
 @Injectable()
 export class ForecastService {
+  private readonly logger = new Logger(ForecastService.name);
+
   constructor(
     private incomesService: IncomesService,
     private installmentPlansService: InstallmentPlansService,
@@ -114,12 +116,25 @@ export class ForecastService {
     yearMonth: string,
     userId: string,
   ): Promise<MonthlyForecast> {
+    const start = Date.now();
     await Promise.all([
       this.materializationService.ensureHorizon(boardId, userId),
       this.installmentPlansService.ensureExpenseOccurrences(boardId, userId),
     ]);
+    const afterSync = Date.now();
 
-    return this.computeMonthlyForecast(boardId, yearMonth, userId);
+    const result = await this.computeMonthlyForecast(
+      boardId,
+      yearMonth,
+      userId,
+    );
+    const afterCompute = Date.now();
+
+    this.logger.debug(
+      `[timing] getMonthlyForecast board=${boardId} month=${yearMonth} sync=${afterSync - start}ms compute=${afterCompute - afterSync}ms total=${afterCompute - start}ms`,
+    );
+
+    return result;
   }
 
   /**
