@@ -114,11 +114,10 @@ export class ForecastService {
     yearMonth: string,
     userId: string,
   ): Promise<MonthlyForecast> {
-    await this.materializationService.ensureHorizon(boardId, userId);
-    await this.installmentPlansService.ensureExpenseOccurrences(
-      boardId,
-      userId,
-    );
+    await Promise.all([
+      this.materializationService.ensureHorizon(boardId, userId),
+      this.installmentPlansService.ensureExpenseOccurrences(boardId, userId),
+    ]);
 
     return this.computeMonthlyForecast(boardId, yearMonth, userId);
   }
@@ -273,11 +272,10 @@ export class ForecastService {
     // Both syncs only depend on "now" and the board's active plans, not on
     // any particular month, so they only need to run once for the whole
     // simulation instead of once per simulated month.
-    await this.materializationService.ensureHorizon(boardId, userId);
-    await this.installmentPlansService.ensureExpenseOccurrences(
-      boardId,
-      userId,
-    );
+    await Promise.all([
+      this.materializationService.ensureHorizon(boardId, userId),
+      this.installmentPlansService.ensureExpenseOccurrences(boardId, userId),
+    ]);
 
     const months: SimulatedExpenseMonth[] = [];
     let tightestYearMonth = startYearMonth;

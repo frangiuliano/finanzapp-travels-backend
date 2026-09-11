@@ -103,25 +103,20 @@ export class RecurringMaterializationService {
         .lean(),
     ]);
 
-    let generated = 0;
+    const [incomeGenerated, expenseGenerated] = await Promise.all([
+      Promise.all(
+        incomeRules.map((rule) =>
+          this.ensureIncomeOccurrences(rule, userId, startMonth, endMonth),
+        ),
+      ).then((counts) => counts.reduce((sum, count) => sum + count, 0)),
+      Promise.all(
+        expenseRules.map((rule) =>
+          this.ensureExpenseOccurrences(rule, userId, startMonth, endMonth),
+        ),
+      ).then((counts) => counts.reduce((sum, count) => sum + count, 0)),
+    ]);
 
-    for (const rule of incomeRules) {
-      generated += await this.ensureIncomeOccurrences(
-        rule,
-        userId,
-        startMonth,
-        endMonth,
-      );
-    }
-
-    for (const rule of expenseRules) {
-      generated += await this.ensureExpenseOccurrences(
-        rule,
-        userId,
-        startMonth,
-        endMonth,
-      );
-    }
+    const generated = incomeGenerated + expenseGenerated;
 
     await this.expenseModel.updateMany(
       {
@@ -447,50 +442,38 @@ export class RecurringMaterializationService {
   ): Promise<void> {
     const boardObjectId = new Types.ObjectId(boardId);
 
-    const incomeRules = await this.recurringIncomeModel
-      .find({ tripId: boardObjectId })
-      .lean();
-
-    for (const rule of incomeRules) {
+    const migrateIncomeRule = async (
+      rule: RecurringIncome & { _id: Types.ObjectId; createdAt?: Date },
+    ): Promise<void> => {
       const versionCount =
         await this.recurringIncomeVersionModel.countDocuments({
           recurringIncomeId: rule._id,
         });
-      if (versionCount > 0) continue;
+      if (versionCount > 0) return;
 
-      const typedRule = rule as RecurringIncome & {
-        _id: Types.ObjectId;
-        createdAt?: Date;
-      };
-      const effectiveFrom = typedRule.createdAt
-        ? getYearMonthFromDate(new Date(typedRule.createdAt))
+      const effectiveFrom = rule.createdAt
+        ? getYearMonthFromDate(new Date(rule.createdAt))
         : getCurrentYearMonth();
 
       await this.recurringIncomeVersionModel.create({
-        recurringIncomeId: typedRule._id,
+        recurringIncomeId: rule._id,
         amount: rule.amount,
         effectiveFrom,
         createdBy: rule.createdBy ?? new Types.ObjectId(userId),
       });
-    }
+    };
 
-    const expenseRules = await this.recurringExpenseModel
-      .find({ tripId: boardObjectId })
-      .lean();
-
-    for (const rule of expenseRules) {
+    const migrateExpenseRule = async (
+      rule: RecurringExpense & { _id: Types.ObjectId; createdAt?: Date },
+    ): Promise<void> => {
       const versionCount =
         await this.recurringExpenseVersionModel.countDocuments({
           recurringExpenseId: rule._id,
         });
-      if (versionCount > 0) continue;
+      if (versionCount > 0) return;
 
-      const typedRule = rule as RecurringExpense & {
-        _id: Types.ObjectId;
-        createdAt?: Date;
-      };
-      const effectiveFrom = typedRule.createdAt
-        ? getYearMonthFromDate(new Date(typedRule.createdAt))
+      const effectiveFrom = rule.createdAt
+        ? getYearMonthFromDate(new Date(rule.createdAt))
         : getCurrentYearMonth();
 
       await this.recurringExpenseVersionModel.create({
@@ -499,7 +482,28 @@ export class RecurringMaterializationService {
         effectiveFrom,
         createdBy: rule.createdBy ?? new Types.ObjectId(userId),
       });
-    }
+    };
+
+    const [incomeRules, expenseRules] = await Promise.all([
+      this.recurringIncomeModel.find({ tripId: boardObjectId }).lean(),
+      this.recurringExpenseModel.find({ tripId: boardObjectId }).lean(),
+    ]);
+
+    await Promise.all([
+      ...incomeRules.map((rule) =>
+        migrateIncomeRule(
+          rule as RecurringIncome & { _id: Types.ObjectId; createdAt?: Date },
+        ),
+      ),
+      ...expenseRules.map((rule) =>
+        migrateExpenseRule(
+          rule as RecurringExpense & {
+            _id: Types.ObjectId;
+            createdAt?: Date;
+          },
+        ),
+      ),
+    ]);
   }
 
   private async ensureIncomeOccurrences(
@@ -517,47 +521,54 @@ export class RecurringMaterializationService {
     const generationStart = this.getRuleGenerationStart(rule, startMonth);
     if (generationStart > endMonth) return 0;
 
-    let generated = 0;
-
-    for (const yearMonth of iterateYearMonthsInclusive(
-      generationStart,
-      endMonth,
-    )) {
-      if (this.isRuleInactiveForMonth(rule, yearMonth)) continue;
-      if (rule.excludedYearMonths?.includes(yearMonth)) continue;
+    const generateForMonth = async (yearMonth: string): Promise<number> => {
+      if (this.isRuleInactiveForMonth(rule, yearMonth)) return 0;
+      if (rule.excludedYearMonths?.includes(yearMonth)) return 0;
 
       const amount = resolveAmountForYearMonth(versions, yearMonth);
-      if (amount == null) continue;
+      if (amount == null) return 0;
 
       const validDays = getValidDaysInMonth(rule.daysOfMonth, yearMonth);
-      for (const day of validDays) {
-        const occurrenceKey = `ri:${rule._id.toString()}:${yearMonth}:${day}`;
-        const existing = await this.incomeModel.findOne({ occurrenceKey });
-        if (existing) continue;
 
-        try {
-          await this.incomeModel.create({
-            tripId: rule.tripId,
-            amount,
-            currency: rule.currency,
-            label: rule.label,
-            description: rule.description,
-            incomeDate: buildOccurrenceDate(yearMonth, day),
-            status: IncomeStatus.PENDING,
-            recurringIncomeId: rule._id,
-            occurrenceKey,
-            createdBy: rule.createdBy,
-          });
-          generated += 1;
-        } catch (error) {
-          if (!this.isDuplicateKeyError(error)) {
-            throw error;
+      const dayResults = await Promise.all(
+        validDays.map(async (day) => {
+          const occurrenceKey = `ri:${rule._id.toString()}:${yearMonth}:${day}`;
+          const existing = await this.incomeModel.findOne({ occurrenceKey });
+          if (existing) return 0;
+
+          try {
+            await this.incomeModel.create({
+              tripId: rule.tripId,
+              amount,
+              currency: rule.currency,
+              label: rule.label,
+              description: rule.description,
+              incomeDate: buildOccurrenceDate(yearMonth, day),
+              status: IncomeStatus.PENDING,
+              recurringIncomeId: rule._id,
+              occurrenceKey,
+              createdBy: rule.createdBy,
+            });
+            return 1;
+          } catch (error) {
+            if (!this.isDuplicateKeyError(error)) {
+              throw error;
+            }
+            return 0;
           }
-        }
-      }
-    }
+        }),
+      );
 
-    return generated;
+      return dayResults.reduce((sum, count) => sum + count, 0);
+    };
+
+    const monthResults = await Promise.all(
+      iterateYearMonthsInclusive(generationStart, endMonth).map(
+        generateForMonth,
+      ),
+    );
+
+    return monthResults.reduce((sum, count) => sum + count, 0);
   }
 
   private async ensureExpenseOccurrences(
@@ -599,29 +610,24 @@ export class RecurringMaterializationService {
     const generationStart = this.getRuleGenerationStart(rule, startMonth);
     if (generationStart > endMonth) return 0;
 
-    let generated = 0;
-
-    for (const yearMonth of iterateYearMonthsInclusive(
-      generationStart,
-      endMonth,
-    )) {
-      if (this.isRuleInactiveForMonth(rule, yearMonth)) continue;
-      if (rule.excludedYearMonths?.includes(yearMonth)) continue;
+    const generateForMonth = async (yearMonth: string): Promise<number> => {
+      if (this.isRuleInactiveForMonth(rule, yearMonth)) return 0;
+      if (rule.excludedYearMonths?.includes(yearMonth)) return 0;
 
       const amount = resolveAmountForYearMonth(
         versions,
         yearMonth,
         this.buildExpenseEscalation(rule),
       );
-      if (amount == null) continue;
+      if (amount == null) return 0;
 
       const validDays = getValidDaysInMonth([rule.dayOfMonth], yearMonth);
-      if (validDays.length === 0) continue;
+      if (validDays.length === 0) return 0;
 
       const day = validDays[0];
       const occurrenceKey = `re:${rule._id.toString()}:${yearMonth}:${day}`;
       const existing = await this.expenseModel.findOne({ occurrenceKey });
-      if (existing) continue;
+      if (existing) return 0;
 
       const expenseDate = buildOccurrenceDate(yearMonth, day);
       const fxOnCreate = this.expenseFxResolver.buildFxOnCreate({
@@ -671,15 +677,22 @@ export class RecurringMaterializationService {
           expenseDate,
           createdBy: rule.createdBy,
         });
-        generated += 1;
+        return 1;
       } catch (error) {
         if (!this.isDuplicateKeyError(error)) {
           throw error;
         }
+        return 0;
       }
-    }
+    };
 
-    return generated;
+    const monthResults = await Promise.all(
+      iterateYearMonthsInclusive(generationStart, endMonth).map(
+        generateForMonth,
+      ),
+    );
+
+    return monthResults.reduce((sum, count) => sum + count, 0);
   }
 
   private getRuleGenerationStart(
