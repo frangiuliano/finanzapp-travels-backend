@@ -37,6 +37,10 @@ export class UpdateExpenseDto {
   amount?: number;
 
   @IsOptional()
+  @IsBoolean()
+  isRefund?: boolean;
+
+  @IsOptional()
   @IsString({ message: 'La moneda debe ser texto' })
   @IsIn(SUPPORTED_CURRENCIES, {
     message: 'Moneda no válida',

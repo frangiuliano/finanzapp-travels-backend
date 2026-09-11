@@ -450,9 +450,9 @@ export class InstallmentPlansService {
       isActive: true,
     });
 
-    for (const plan of plans) {
-      await this.syncExpenseOccurrences(plan, userId, false);
-    }
+    await Promise.all(
+      plans.map((plan) => this.syncExpenseOccurrences(plan, userId, false)),
+    );
   }
 
   private async syncExpenseOccurrences(
@@ -483,6 +483,7 @@ export class InstallmentPlansService {
     if (!paidByParticipantId) return;
 
     const now = new Date();
+    const bulkOps: Parameters<typeof this.expenseModel.bulkWrite>[0] = [];
     for (
       let installmentNumber = plan.paidInstallments + 1;
       installmentNumber <= plan.totalInstallments;
@@ -497,35 +498,41 @@ export class InstallmentPlansService {
         expenseDate <= now ? ExpenseStatus.PAID : ExpenseStatus.PENDING;
       const occurrenceKey = `installment:${plan._id.toString()}:${installmentNumber}`;
 
-      await this.expenseModel.updateOne(
-        { occurrenceKey },
-        {
-          $setOnInsert: {
-            tripId: plan.tripId,
-            amount: plan.installmentAmount,
-            currency: plan.currency,
-            fxRateToBoardCurrency: plan.fxRateToBoardCurrency,
-            fxCapturedAt: plan.fxCapturedAt,
-            paymentYearMonth: yearMonth,
-            description: plan.label,
-            paidByParticipantId,
-            status,
-            paymentMethod: plan.paymentMethodId
-              ? PaymentMethod.CARD
-              : PaymentMethod.CASH,
-            paymentMethodId: plan.paymentMethodId,
-            cardId: plan.paymentMethodId,
-            isDivisible: false,
-            installmentPlanId: plan._id,
-            installmentNumber,
-            occurrenceKey,
-            expenseDate,
-            createdBy: plan.createdBy,
-            categoryId: plan.categoryId,
+      bulkOps.push({
+        updateOne: {
+          filter: { occurrenceKey },
+          update: {
+            $setOnInsert: {
+              tripId: plan.tripId,
+              amount: plan.installmentAmount,
+              currency: plan.currency,
+              fxRateToBoardCurrency: plan.fxRateToBoardCurrency,
+              fxCapturedAt: plan.fxCapturedAt,
+              paymentYearMonth: yearMonth,
+              description: plan.label,
+              paidByParticipantId,
+              status,
+              paymentMethod: plan.paymentMethodId
+                ? PaymentMethod.CARD
+                : PaymentMethod.CASH,
+              paymentMethodId: plan.paymentMethodId,
+              cardId: plan.paymentMethodId,
+              isDivisible: false,
+              installmentPlanId: plan._id,
+              installmentNumber,
+              occurrenceKey,
+              expenseDate,
+              createdBy: plan.createdBy,
+              categoryId: plan.categoryId,
+            },
           },
+          upsert: true,
         },
-        { upsert: true },
-      );
+      });
+    }
+
+    if (bulkOps.length > 0) {
+      await this.expenseModel.bulkWrite(bulkOps, { ordered: false });
     }
 
     await this.expenseModel.updateMany(

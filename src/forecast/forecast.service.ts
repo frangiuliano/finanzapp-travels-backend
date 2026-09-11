@@ -120,6 +120,22 @@ export class ForecastService {
       userId,
     );
 
+    return this.computeMonthlyForecast(boardId, yearMonth, userId);
+  }
+
+  /**
+   * Same computation as getMonthlyForecast but without re-running the
+   * horizon/installment-occurrence sync. Both syncs only depend on "now" and
+   * the board's active plans — never on the requested yearMonth — so calling
+   * getMonthlyForecast per month in a loop (e.g. simulateExpense) redoes the
+   * exact same expensive sync work on every iteration for nothing. Callers
+   * that already ensured the horizon once should use this instead.
+   */
+  private async computeMonthlyForecast(
+    boardId: string,
+    yearMonth: string,
+    userId: string,
+  ): Promise<MonthlyForecast> {
     const actualSummary = await this.incomesService.getMonthlySummary(
       boardId,
       yearMonth,
@@ -254,6 +270,15 @@ export class ForecastService {
       installments,
     );
 
+    // Both syncs only depend on "now" and the board's active plans, not on
+    // any particular month, so they only need to run once for the whole
+    // simulation instead of once per simulated month.
+    await this.materializationService.ensureHorizon(boardId, userId);
+    await this.installmentPlansService.ensureExpenseOccurrences(
+      boardId,
+      userId,
+    );
+
     const months: SimulatedExpenseMonth[] = [];
     let tightestYearMonth = startYearMonth;
     let lowestProjectedRemaining = Number.POSITIVE_INFINITY;
@@ -261,7 +286,7 @@ export class ForecastService {
 
     for (let index = 0; index < installments; index++) {
       const yearMonth = shiftYearMonth(startYearMonth, index);
-      const forecast = await this.getMonthlyForecast(
+      const forecast = await this.computeMonthlyForecast(
         boardId,
         yearMonth,
         userId,

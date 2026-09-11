@@ -29,7 +29,7 @@ describe('InstallmentPlansService materialization', () => {
     };
     const expenseModel = {
       deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
-      updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 }),
+      bulkWrite: jest.fn().mockResolvedValue({ upsertedCount: 2 }),
       updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
     };
     const participantModel = {
@@ -54,31 +54,39 @@ describe('InstallmentPlansService materialization', () => {
       userId.toString(),
     );
 
-    expect(expenseModel.updateOne).toHaveBeenCalledTimes(2);
-    expect(expenseModel.updateOne).toHaveBeenNthCalledWith(
-      1,
-      { occurrenceKey: `installment:${planId.toString()}:2` },
-      expect.objectContaining({
-        $setOnInsert: expect.objectContaining({
-          installmentNumber: 2,
-          paymentYearMonth: '2026-09',
-          status: ExpenseStatus.PAID,
-        }),
-      }),
-      { upsert: true },
-    );
-    expect(expenseModel.updateOne).toHaveBeenNthCalledWith(
-      2,
-      { occurrenceKey: `installment:${planId.toString()}:3` },
-      expect.objectContaining({
-        $setOnInsert: expect.objectContaining({
-          installmentNumber: 3,
-          paymentYearMonth: '2026-10',
-          status: ExpenseStatus.PENDING,
-        }),
-      }),
-      { upsert: true },
-    );
+    expect(expenseModel.bulkWrite).toHaveBeenCalledTimes(1);
+    const [bulkOps, bulkOptions] = expenseModel.bulkWrite.mock.calls[0] as [
+      Array<{ updateOne: unknown }>,
+      { ordered: boolean },
+    ];
+    expect(bulkOptions).toEqual({ ordered: false });
+    expect(bulkOps).toHaveLength(2);
+    expect(bulkOps[0]).toEqual({
+      updateOne: {
+        filter: { occurrenceKey: `installment:${planId.toString()}:2` },
+        update: {
+          $setOnInsert: expect.objectContaining({
+            installmentNumber: 2,
+            paymentYearMonth: '2026-09',
+            status: ExpenseStatus.PAID,
+          }),
+        },
+        upsert: true,
+      },
+    });
+    expect(bulkOps[1]).toEqual({
+      updateOne: {
+        filter: { occurrenceKey: `installment:${planId.toString()}:3` },
+        update: {
+          $setOnInsert: expect.objectContaining({
+            installmentNumber: 3,
+            paymentYearMonth: '2026-10',
+            status: ExpenseStatus.PENDING,
+          }),
+        },
+        upsert: true,
+      },
+    });
 
     jest.useRealTimers();
   });

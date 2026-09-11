@@ -104,6 +104,12 @@ interface PopulatedPaymentMethodEntity {
   tripId?: Types.ObjectId;
 }
 
+interface PopulatedInstallmentPlan {
+  _id: Types.ObjectId;
+  totalInstallments: number;
+  label?: string;
+}
+
 interface PopulatedExpense {
   _id: Types.ObjectId;
   tripId: Types.ObjectId;
@@ -125,6 +131,8 @@ interface PopulatedExpense {
   isDivisible: boolean;
   splitType?: SplitType;
   splits?: PopulatedExpenseSplit[];
+  installmentPlanId?: PopulatedInstallmentPlan | Types.ObjectId;
+  installmentNumber?: number;
   createdBy: PopulatedUser | Types.ObjectId;
   expenseDate: Date;
   paymentYearMonth?: string;
@@ -178,6 +186,17 @@ function isPopulatedCard(
   );
 }
 
+function isPopulatedInstallmentPlan(
+  value: PopulatedInstallmentPlan | Types.ObjectId,
+): value is PopulatedInstallmentPlan {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Types.ObjectId) &&
+    'totalInstallments' in value
+  );
+}
+
 function objectIdToString(id: Types.ObjectId | string | undefined): string {
   if (!id) return '';
   if (typeof id === 'string') return id;
@@ -218,6 +237,7 @@ const EXPENSE_RELATION_POPULATES = [
       select: 'firstName lastName',
     },
   },
+  { path: 'installmentPlanId', select: '_id totalInstallments label' },
 ];
 
 function parseExpenseDateFrom(value: string): Date {
@@ -428,10 +448,17 @@ export class ExpensesService implements OnModuleInit {
     const status = createExpenseDto.status || ExpenseStatus.PAID;
 
     const isDivisible = createExpenseDto.isDivisible ?? false;
+    const isRefund = createExpenseDto.isRefund ?? false;
 
     if (isDivisible && board.type !== BoardType.TRAVEL) {
       throw new BadRequestException(
         'Los splits solo están disponibles en tableros travel',
+      );
+    }
+
+    if (isRefund && isDivisible) {
+      throw new BadRequestException(
+        'Las devoluciones no pueden dividirse entre participantes',
       );
     }
 
@@ -577,12 +604,17 @@ export class ExpensesService implements OnModuleInit {
       }
     }
 
+    const signedAmount = isRefund
+      ? -Math.abs(createExpenseDto.amount)
+      : createExpenseDto.amount;
+
     const expense = new this.expenseModel({
       tripId: new Types.ObjectId(boardId),
       budgetId: createExpenseDto.budgetId
         ? new Types.ObjectId(createExpenseDto.budgetId)
         : undefined,
-      amount: createExpenseDto.amount,
+      amount: signedAmount,
+      isRefund,
       currency: expenseCurrency,
       fxRateToBoardCurrency,
       fxCapturedAt,
@@ -959,7 +991,24 @@ export class ExpensesService implements OnModuleInit {
         ? updateExpenseDto.isDivisible
         : expense.isDivisible;
 
-    const newAmount = updateExpenseDto.amount || expense.amount;
+    const effectiveIsRefund =
+      updateExpenseDto.isRefund !== undefined
+        ? updateExpenseDto.isRefund
+        : (expense.isRefund ?? false);
+
+    if (effectiveIsRefund && isDivisible) {
+      throw new BadRequestException(
+        'Las devoluciones no pueden dividirse entre participantes',
+      );
+    }
+
+    const newAmountMagnitude =
+      updateExpenseDto.amount !== undefined
+        ? Math.abs(updateExpenseDto.amount)
+        : Math.abs(expense.amount);
+    const newAmount = effectiveIsRefund
+      ? -newAmountMagnitude
+      : newAmountMagnitude;
     let processedSplits: ExpenseSplit[] | undefined = expense.splits;
 
     const isChangingDivisibility = expense.isDivisible !== isDivisible;
@@ -1075,6 +1124,8 @@ export class ExpensesService implements OnModuleInit {
           key !== 'tripId' && key !== 'boardId' && value !== undefined,
       ),
     );
+    updateFields.amount = newAmount;
+    updateFields.isRefund = effectiveIsRefund;
 
     const originalAmountForOverride = expense.amount;
     const originalDescriptionForOverride = expense.description;
@@ -1855,6 +1906,20 @@ export class ExpensesService implements OnModuleInit {
         const idStr = objectIdToString(paymentMethodSource);
         transformed.paymentMethodId = idStr;
         transformed.cardId = idStr;
+      }
+    }
+
+    if (expenseRecord.installmentPlanId) {
+      if (isPopulatedInstallmentPlan(expenseRecord.installmentPlanId)) {
+        transformed.installmentPlanId = objectIdToString(
+          expenseRecord.installmentPlanId._id,
+        );
+        transformed.installmentTotalInstallments =
+          expenseRecord.installmentPlanId.totalInstallments;
+      } else {
+        transformed.installmentPlanId = objectIdToString(
+          expenseRecord.installmentPlanId,
+        );
       }
     }
 

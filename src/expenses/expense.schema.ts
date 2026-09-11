@@ -40,8 +40,20 @@ export class Expense {
   @Prop({ type: Types.ObjectId, ref: 'Budget', required: false })
   budgetId?: Types.ObjectId;
 
-  @Prop({ required: true, min: 0.01 })
+  // Refunds are stored as a negative amount so every sum across the app
+  // (totals, budgets, forecasts) nets them out automatically.
+  @Prop({
+    required: true,
+    validate: {
+      validator: (value: number) => value !== 0,
+      message: 'El monto no puede ser 0',
+    },
+  })
   amount: number;
+
+  /** True when this expense is a refund/reembolso: reduces spend instead of adding to it. */
+  @Prop({ type: Boolean, default: false, required: false })
+  isRefund?: boolean;
 
   @Prop({ required: true, default: 'USD' })
   currency: string;
@@ -202,6 +214,10 @@ export const ExpenseSchema = SchemaFactory.createForClass(Expense);
 
 ExpenseSchema.index({ tripId: 1, createdAt: -1 });
 ExpenseSchema.index({ tripId: 1, expenseDate: -1 });
+// Every month-scoped read (Movimientos, forecast, monthly summaries) filters
+// by tripId + paymentYearMonth; without this compound index that filter
+// degrades to a collection scan as the number of expenses grows.
+ExpenseSchema.index({ tripId: 1, paymentYearMonth: 1 });
 ExpenseSchema.index(
   { budgetId: 1 },
   { partialFilterExpression: { budgetId: { $exists: true } } },

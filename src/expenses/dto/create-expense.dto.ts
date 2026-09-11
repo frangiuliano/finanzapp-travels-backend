@@ -40,6 +40,12 @@ export class CreateExpenseDto {
   @Min(0.01, { message: 'El monto debe ser mayor a 0' })
   amount: number;
 
+  // Refund/reembolso: the amount above is the positive magnitude entered by
+  // the user; the service stores it as negative so it nets out of totals.
+  @IsOptional()
+  @IsBoolean()
+  isRefund?: boolean;
+
   @IsOptional()
   @IsString({ message: 'La moneda debe ser texto' })
   @IsIn(SUPPORTED_CURRENCIES, {
