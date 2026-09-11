@@ -82,4 +82,17 @@ export class CreateRecurringExpenseDto {
   @IsArray()
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { each: true })
   excludedYearMonths?: string[];
+
+  /**
+   * Month (YYYY-MM) the escalation cycle counts from — i.e. when the amount
+   * above became/becomes effective. Defaults to the current month, but can be
+   * set to a past or future month so the first increase lands on the right
+   * date instead of always being `escalationFrequencyMonths` after creation.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, {
+    message: 'anchorYearMonth debe tener formato YYYY-MM',
+  })
+  anchorYearMonth?: string;
 }

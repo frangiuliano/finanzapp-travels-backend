@@ -82,7 +82,7 @@ export class RecurringExpensesService {
     await this.recurringExpenseVersionModel.create({
       recurringExpenseId: saved._id,
       amount: createDto.amount,
-      effectiveFrom: getCurrentYearMonth(),
+      effectiveFrom: createDto.anchorYearMonth ?? getCurrentYearMonth(),
       createdBy: new Types.ObjectId(userId),
     });
 
