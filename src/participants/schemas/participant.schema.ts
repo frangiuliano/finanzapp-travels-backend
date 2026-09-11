@@ -72,6 +72,10 @@ ParticipantSchema.index(
   },
 );
 
+// Los tableros de un usuario se buscan por userId solo (sin tripId), y el
+// índice compuesto de arriba no sirve para eso porque tripId va primero.
+ParticipantSchema.index({ userId: 1 }, { sparse: true });
+
 ParticipantSchema.index(
   { tripId: 1, guestEmail: 1 },
   {

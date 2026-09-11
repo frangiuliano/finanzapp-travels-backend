@@ -182,18 +182,19 @@ export class BoardsService implements OnModuleInit {
       return [];
     }
 
-    const boards = await this.boardModel
-      .find({ _id: { $in: boardIds }, archivedAt: { $exists: false } })
-      .populate('createdBy', 'firstName lastName email')
-      .sort({ createdAt: -1 })
-      .lean();
-
-    const participantCounts = await this.participantModel.aggregate<{
-      _id: Types.ObjectId;
-      count: number;
-    }>([
-      { $match: { tripId: { $in: boardIds } } },
-      { $group: { _id: '$tripId', count: { $sum: 1 } } },
+    const [boards, participantCounts] = await Promise.all([
+      this.boardModel
+        .find({ _id: { $in: boardIds }, archivedAt: { $exists: false } })
+        .populate('createdBy', 'firstName lastName email')
+        .sort({ createdAt: -1 })
+        .lean(),
+      this.participantModel.aggregate<{
+        _id: Types.ObjectId;
+        count: number;
+      }>([
+        { $match: { tripId: { $in: boardIds } } },
+        { $group: { _id: '$tripId', count: { $sum: 1 } } },
+      ]),
     ]);
     const sharedBoardIds = new Set(
       participantCounts
