@@ -296,5 +296,28 @@ describe('IncomesService', () => {
         service.getMonthlySummary(boardId.toString(), '2026-13', userId),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('nets a refund (negative amount) into totalExpenses instead of dropping it', async () => {
+      // Income 100, a normal expense of 80, and a refund stored as -10:
+      // remaining must be 100 - (80 - 10) = 30, not 100 - 80 = 20.
+      incomeQuery.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{ amount: 100, currency: 'ARS' }]),
+      });
+      expenseModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { amount: 80, currency: 'ARS' },
+          { amount: -10, currency: 'ARS', isRefund: true },
+        ]),
+      });
+
+      const summary = await service.getMonthlySummary(
+        boardId.toString(),
+        '2026-07',
+        userId,
+      );
+
+      expect(summary.totalExpenses).toBe(70);
+      expect(summary.remaining).toBe(30);
+    });
   });
 });

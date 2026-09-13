@@ -778,7 +778,9 @@ export class ExpensesService implements OnModuleInit {
       const attributedAmount = participantId
         ? getPersonalExpenseAmount(expense, participantId)
         : 0;
-      if (attributedAmount <= 0) return [];
+      // 0 means "not this participant's share" — a genuinely negative
+      // amount is a refund and must still show up, not be dropped.
+      if (attributedAmount === 0) return [];
       originalAmountById.set(expense._id.toString(), expense.amount);
       return [{ ...expense, amount: attributedAmount }];
     });

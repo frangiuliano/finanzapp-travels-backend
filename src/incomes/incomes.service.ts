@@ -286,7 +286,10 @@ export class IncomesService {
             participantByBoardId.get(sourceBoardId)!,
           )
         : sourceExpense.amount;
-      if (attributedAmount <= 0) continue;
+      // 0 means "not this participant's share" (getPersonalExpenseAmount's
+      // not-involved sentinel) — genuinely negative amounts are refunds and
+      // must still be netted into the total, not dropped.
+      if (attributedAmount === 0) continue;
       expenseTotals.add(sourceExpense.currency, attributedAmount);
     }
 

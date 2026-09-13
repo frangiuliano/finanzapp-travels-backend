@@ -169,7 +169,9 @@ export class ReportsService {
             participantByBoardId.get(sourceBoardId)!,
           )
         : sourceExpense.amount;
-      if (attributedAmount <= 0) continue;
+      // 0 means "not this participant's share" — a genuinely negative
+      // amount is a refund and must still be netted in, not dropped.
+      if (attributedAmount === 0) continue;
       const expense = { ...sourceExpense, amount: attributedAmount };
       expenseTotals.add(expense.currency, attributedAmount);
       attributedExpenses.push(expense);
