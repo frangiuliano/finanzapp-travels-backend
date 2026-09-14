@@ -26,6 +26,7 @@ import { InAppNotificationsModule } from './in-app-notifications/in-app-notifica
 import { WealthModule } from './wealth/wealth.module';
 import { GoalsModule } from './goals/goals.module';
 import { StatementImportsModule } from './statement-imports/statement-imports.module';
+import { ShortcutIntegrationsModule } from './shortcut-integrations/shortcut-integrations.module';
 import { environmentValidationSchema } from './config/env.validation';
 
 @Module({
@@ -77,6 +78,7 @@ import { environmentValidationSchema } from './config/env.validation';
     WealthModule,
     GoalsModule,
     StatementImportsModule,
+    ShortcutIntegrationsModule,
   ],
   controllers: [AppController],
   providers: [

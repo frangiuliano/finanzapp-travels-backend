@@ -71,6 +71,7 @@ async function bootstrap() {
       // Offline expense queue sends this on POST /expenses; omitting it
       // makes the browser abort the preflight as a "network error".
       'Idempotency-Key',
+      'X-FinanzApp-Shortcut-Token',
     ],
   });
 
