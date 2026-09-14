@@ -10,6 +10,7 @@ import {
   shiftYearMonth,
 } from '../common/utils/parse-year-month';
 import { splitInstallmentAmounts } from '../common/utils/split-installment-amounts';
+import { MAX_PLANNING_HORIZON_MONTHS } from '../common/constants/recurring-horizon';
 import {
   CurrencyBreakdownBuilder,
   CurrencyBreakdownEntry,
@@ -257,6 +258,41 @@ export class ForecastService {
         outflowsByCurrency: plannedFixedTotals.otherThan(boardCurrency),
       },
     };
+  }
+
+  /**
+   * Same as getMonthlyForecast, but for a run of consecutive months, syncing
+   * the horizon/installment-occurrences only once instead of once per month
+   * (same rationale as simulateExpense below). Used by GoalsService to build
+   * the multi-month capacity series the joint planner needs without paying
+   * the sync cost 60 times over.
+   */
+  async getMonthlyForecastRange(
+    boardId: string,
+    userId: string,
+    startYearMonth: string,
+    monthsCount: number,
+  ): Promise<MonthlyForecast[]> {
+    const boundedMonthsCount = Math.min(
+      Math.max(1, Math.trunc(monthsCount)),
+      MAX_PLANNING_HORIZON_MONTHS,
+    );
+    await Promise.all([
+      this.materializationService.ensureHorizon(
+        boardId,
+        userId,
+        boundedMonthsCount,
+      ),
+      this.installmentPlansService.ensureExpenseOccurrences(boardId, userId),
+    ]);
+    const results: MonthlyForecast[] = [];
+    for (let index = 0; index < boundedMonthsCount; index++) {
+      const yearMonth = shiftYearMonth(startYearMonth, index);
+      results.push(
+        await this.computeMonthlyForecast(boardId, yearMonth, userId),
+      );
+    }
+    return results;
   }
 
   async ensureHorizon(boardId: string, userId: string, monthsAhead?: number) {

@@ -6,12 +6,8 @@ import { ParticipantsModule } from '../participants/participants.module';
 import { Board, BoardSchema } from '../trips/board.schema';
 import { User, UserSchema } from '../users/user.schema';
 import {
-  GoalAllocation,
-  GoalAllocationSchema,
   Holding,
   HoldingSchema,
-  SavingsGoal,
-  SavingsGoalSchema,
   WealthEvent,
   WealthEventSchema,
   FinancialInstrument,
@@ -30,8 +26,6 @@ import { MarketDataService } from './market-data.service';
       { name: Board.name, schema: BoardSchema },
       { name: User.name, schema: UserSchema },
       { name: Holding.name, schema: HoldingSchema },
-      { name: SavingsGoal.name, schema: SavingsGoalSchema },
-      { name: GoalAllocation.name, schema: GoalAllocationSchema },
       { name: WealthEvent.name, schema: WealthEventSchema },
       { name: FinancialInstrument.name, schema: FinancialInstrumentSchema },
       { name: InvestmentPosition.name, schema: InvestmentPositionSchema },

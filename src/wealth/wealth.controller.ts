@@ -17,11 +17,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UserDocument } from '../users/user.schema';
 import {
   AdjustHoldingBalanceDto,
-  CreateGoalContributionDto,
   CreateHoldingDto,
-  CreateSavingsGoalDto,
   UpdateHoldingDto,
-  UpdateSavingsGoalDto,
   CreateInstrumentDto,
   CreateInvestmentTransactionDto,
   CreatePositionDto,
@@ -98,63 +95,6 @@ export class WealthController {
   ) {
     await this.wealthService.archiveHolding(
       id,
-      user._id.toString(),
-      this.requireBoardId(boardId),
-    );
-  }
-
-  @Post('goals')
-  createGoal(
-    @Body() dto: CreateSavingsGoalDto,
-    @Query('boardId') boardId: string,
-    @GetUser() user: UserDocument,
-  ) {
-    return this.wealthService.createGoal(
-      dto,
-      user._id.toString(),
-      this.requireBoardId(boardId),
-    );
-  }
-
-  @Patch('goals/:id')
-  updateGoal(
-    @Param('id') id: string,
-    @Body() dto: UpdateSavingsGoalDto,
-    @Query('boardId') boardId: string,
-    @GetUser() user: UserDocument,
-  ) {
-    return this.wealthService.updateGoal(
-      id,
-      dto,
-      user._id.toString(),
-      this.requireBoardId(boardId),
-    );
-  }
-
-  @Delete('goals/:id')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async archiveGoal(
-    @Param('id') id: string,
-    @Query('boardId') boardId: string,
-    @GetUser() user: UserDocument,
-  ) {
-    await this.wealthService.archiveGoal(
-      id,
-      user._id.toString(),
-      this.requireBoardId(boardId),
-    );
-  }
-
-  @Post('goals/:id/contributions')
-  contribute(
-    @Param('id') id: string,
-    @Body() dto: CreateGoalContributionDto,
-    @Query('boardId') boardId: string,
-    @GetUser() user: UserDocument,
-  ) {
-    return this.wealthService.contribute(
-      id,
-      dto,
       user._id.toString(),
       this.requireBoardId(boardId),
     );
