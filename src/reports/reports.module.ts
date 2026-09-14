@@ -9,6 +9,10 @@ import {
   PaymentMethod,
   PaymentMethodSchema,
 } from '../payment-methods/payment-method.schema';
+import {
+  InstallmentPlan,
+  InstallmentPlanSchema,
+} from '../installment-plans/installment-plan.schema';
 import { ParticipantsModule } from '../participants/participants.module';
 import { BoardsModule } from '../trips/trips.module';
 
@@ -19,6 +23,7 @@ import { BoardsModule } from '../trips/trips.module';
       { name: Income.name, schema: IncomeSchema },
       { name: Category.name, schema: CategorySchema },
       { name: PaymentMethod.name, schema: PaymentMethodSchema },
+      { name: InstallmentPlan.name, schema: InstallmentPlanSchema },
     ]),
     forwardRef(() => ParticipantsModule),
     forwardRef(() => BoardsModule),

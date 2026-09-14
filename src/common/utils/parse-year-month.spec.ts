@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  daysInYearMonth,
   getCurrentYearMonth,
   parseYearMonth,
   shiftYearMonth,
@@ -46,5 +47,23 @@ describe('shiftYearMonth', () => {
 describe('getCurrentYearMonth', () => {
   it('should format year and month', () => {
     expect(getCurrentYearMonth(new Date(2026, 7, 15))).toBe('2026-08');
+  });
+});
+
+describe('daysInYearMonth', () => {
+  it('should return 31 for a 31-day month', () => {
+    expect(daysInYearMonth('2026-07')).toBe(31);
+  });
+
+  it('should return 30 for a 30-day month', () => {
+    expect(daysInYearMonth('2026-04')).toBe(30);
+  });
+
+  it('should return 28 for February in a non-leap year', () => {
+    expect(daysInYearMonth('2026-02')).toBe(28);
+  });
+
+  it('should return 29 for February in a leap year', () => {
+    expect(daysInYearMonth('2024-02')).toBe(29);
   });
 });

@@ -10,8 +10,16 @@ import {
   PaymentMethod,
   PaymentMethodKind,
 } from '../payment-methods/payment-method.schema';
+import { InstallmentPlan } from '../installment-plans/installment-plan.schema';
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
+
+const EMPTY_INSTALLMENT_ACTIVITY = {
+  totalAmount: 0,
+  count: 0,
+  startedPlans: [],
+  finishedPlans: [],
+};
 
 describe('ReportsService', () => {
   let service: ReportsService;
@@ -25,6 +33,7 @@ describe('ReportsService', () => {
   const incomeModel = { find: jest.fn() };
   const categoryModel = { find: jest.fn() };
   const paymentMethodModel = { find: jest.fn() };
+  const installmentPlanModel = { find: jest.fn() };
 
   const participantsService = {
     ensureParticipantAccess: jest.fn(),
@@ -48,6 +57,10 @@ describe('ReportsService', () => {
         {
           provide: getModelToken(PaymentMethod.name),
           useValue: paymentMethodModel,
+        },
+        {
+          provide: getModelToken(InstallmentPlan.name),
+          useValue: installmentPlanModel,
         },
         { provide: ParticipantsService, useValue: participantsService },
         { provide: BoardsService, useValue: boardsService },
@@ -183,6 +196,102 @@ describe('ReportsService', () => {
       ]);
     });
 
+    it('should report a finished plan (installmentNumber === totalInstallments) and a started one (=== paidInstallments + 1)', async () => {
+      const finishedPlanId = new Types.ObjectId();
+      const startedPlanId = new Types.ObjectId();
+
+      incomeModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      expenseModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            amount: 1000,
+            currency: 'ARS',
+            installmentPlanId: finishedPlanId,
+            installmentNumber: 12,
+          },
+          {
+            amount: 500,
+            currency: 'ARS',
+            installmentPlanId: startedPlanId,
+            installmentNumber: 3, // plan seeded with paidInstallments=2
+          },
+        ]),
+      });
+      categoryModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      paymentMethodModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      installmentPlanModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            _id: finishedPlanId,
+            label: 'Heladera',
+            totalInstallments: 12,
+            paidInstallments: 0,
+          },
+          {
+            _id: startedPlanId,
+            label: 'Notebook',
+            totalInstallments: 6,
+            paidInstallments: 2,
+          },
+        ]),
+      });
+
+      const report = await service.getBoardCalendarReport(
+        boardId.toString(),
+        '2026-07',
+        userId,
+      );
+
+      expect(report.installmentActivity.totalAmount).toBe(1500);
+      expect(report.installmentActivity.count).toBe(2);
+      expect(report.installmentActivity.finishedPlans).toEqual([
+        expect.objectContaining({
+          label: 'Heladera',
+          installmentNumber: 12,
+          totalInstallments: 12,
+        }),
+      ]);
+      expect(report.installmentActivity.startedPlans).toEqual([
+        expect.objectContaining({
+          label: 'Notebook',
+          installmentNumber: 3,
+          totalInstallments: 6,
+        }),
+      ]);
+    });
+
+    it('should return empty installment activity without querying InstallmentPlan when no expense is installment-linked', async () => {
+      incomeModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      expenseModel.find.mockReturnValue({
+        lean: jest
+          .fn()
+          .mockResolvedValue([{ amount: 100, currency: 'ARS', categoryId }]),
+      });
+      categoryModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      paymentMethodModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+      const report = await service.getBoardCalendarReport(
+        boardId.toString(),
+        '2026-07',
+        userId,
+      );
+
+      expect(report.installmentActivity).toEqual(EMPTY_INSTALLMENT_ACTIVITY);
+      expect(installmentPlanModel.find).not.toHaveBeenCalled();
+    });
+
     it('should require participant access', async () => {
       participantsService.ensureParticipantAccess.mockRejectedValue(
         new ForbiddenException('No tienes acceso'),
@@ -191,6 +300,113 @@ describe('ReportsService', () => {
       await expect(
         service.getBoardCalendarReport(boardId.toString(), '2026-07', userId),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('should filter expenses/incomes by expenseDate/incomeDate cutoff when upToDate is given', async () => {
+      incomeModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{ amount: 1000, currency: 'ARS' }]),
+      });
+      expenseModel.find.mockReturnValue({
+        lean: jest
+          .fn()
+          .mockResolvedValue([
+            { amount: 200, currency: 'ARS', categoryId, paymentMethodId },
+          ]),
+      });
+      categoryModel.find.mockReturnValue({
+        lean: jest
+          .fn()
+          .mockResolvedValue([{ _id: categoryId, name: 'Comida' }]),
+      });
+      paymentMethodModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            _id: paymentMethodId,
+            name: 'Visa',
+            kind: PaymentMethodKind.CREDIT,
+          },
+        ]),
+      });
+
+      const cutoff = new Date(2026, 6, 15, 23, 59, 59, 999);
+      await service.getBoardCalendarReport(
+        boardId.toString(),
+        '2026-07',
+        userId,
+        {
+          upToDate: cutoff,
+        },
+      );
+
+      const [expenseQueryArg] = expenseModel.find.mock.calls[0] as [
+        Record<string, unknown>,
+      ];
+      expect(expenseQueryArg).toMatchObject({
+        tripId: expect.anything(),
+        paymentYearMonth: '2026-07',
+        expenseDate: { $lte: cutoff },
+      });
+
+      const [incomeQueryArg] = incomeModel.find.mock.calls[0] as [
+        { incomeDate: { $lt: Date } },
+      ];
+      expect(incomeQueryArg.incomeDate.$lt).toEqual(cutoff);
+    });
+
+    it('should not narrow the income upper bound past the month end when upToDate is later', async () => {
+      incomeModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      expenseModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      categoryModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      paymentMethodModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+      const farFutureCutoff = new Date(2099, 0, 1);
+      await service.getBoardCalendarReport(
+        boardId.toString(),
+        '2026-07',
+        userId,
+        {
+          upToDate: farFutureCutoff,
+        },
+      );
+
+      const [incomeQueryArg] = incomeModel.find.mock.calls[0] as [
+        { incomeDate: { $lt: Date } },
+      ];
+      expect(incomeQueryArg.incomeDate.$lt).toEqual(new Date('2026-08-01'));
+    });
+
+    it('should behave exactly as before when no options are passed', async () => {
+      incomeModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      expenseModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      categoryModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      paymentMethodModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+      await service.getBoardCalendarReport(
+        boardId.toString(),
+        '2026-07',
+        userId,
+      );
+
+      const [expenseQueryArg] = expenseModel.find.mock.calls[0] as [
+        { expenseDate?: unknown },
+      ];
+      expect(expenseQueryArg.expenseDate).toBeUndefined();
     });
   });
 
@@ -218,6 +434,7 @@ describe('ReportsService', () => {
           byPaymentMethod: [],
           incomesByCurrency: [],
           expensesByCurrency: [],
+          installmentActivity: EMPTY_INSTALLMENT_ACTIVITY,
         })
         .mockResolvedValueOnce({
           boardId: board2Id.toString(),
@@ -230,6 +447,7 @@ describe('ReportsService', () => {
           byPaymentMethod: [],
           incomesByCurrency: [],
           expensesByCurrency: [],
+          installmentActivity: EMPTY_INSTALLMENT_ACTIVITY,
         });
 
       const report = await service.getConsolidatedReport('2026-07', userId);
@@ -266,6 +484,7 @@ describe('ReportsService', () => {
           byPaymentMethod: [],
           incomesByCurrency: [],
           expensesByCurrency: [],
+          installmentActivity: EMPTY_INSTALLMENT_ACTIVITY,
         });
 
       const report = await service.getConsolidatedReport('2026-07', userId, [

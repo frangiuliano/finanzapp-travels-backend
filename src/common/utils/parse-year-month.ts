@@ -48,3 +48,11 @@ export function monthsBetweenYearMonths(
   const [toYear, toMonth] = toYearMonth.split('-').map(Number);
   return (toYear - fromYear) * 12 + (toMonth - fromMonth);
 }
+
+/** Number of real calendar days in a given YYYY-MM month (handles leap years). */
+export function daysInYearMonth(yearMonth: string): number {
+  const [yearStr, monthStr] = yearMonth.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  return new Date(year, month, 0).getDate();
+}

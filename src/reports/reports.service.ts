@@ -9,6 +9,10 @@ import {
   PaymentMethodDocument,
   PaymentMethodKind,
 } from '../payment-methods/payment-method.schema';
+import {
+  InstallmentPlan,
+  InstallmentPlanDocument,
+} from '../installment-plans/installment-plan.schema';
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
 import { Board, BoardType } from '../trips/board.schema';
@@ -39,6 +43,34 @@ export interface PaymentMethodBreakdownItem {
   otherCurrencyTotals: CurrencyBreakdownEntry[];
 }
 
+export interface BoardCalendarReportOptions {
+  /**
+   * Truncate the queried period to occurrences on or before this date
+   * (matched against expenseDate/incomeDate, not paymentYearMonth). Used to
+   * compare an incomplete current month against the same elapsed-day window
+   * of a previous month.
+   */
+  upToDate?: Date;
+}
+
+export interface InstallmentPlanEvent {
+  planId: string;
+  label: string;
+  amount: number;
+  installmentNumber: number;
+  totalInstallments: number;
+}
+
+export interface InstallmentActivity {
+  /** Sum of every installment-linked expense this period, in the board's base currency (same convention as totalExpenses). */
+  totalAmount: number;
+  count: number;
+  /** Plans whose very first materialized cuota falls in this period. */
+  startedPlans: InstallmentPlanEvent[];
+  /** Plans whose last cuota (installmentNumber === totalInstallments) falls in this period. */
+  finishedPlans: InstallmentPlanEvent[];
+}
+
 export interface BoardCalendarReport {
   boardId: string;
   yearMonth: string;
@@ -51,6 +83,7 @@ export interface BoardCalendarReport {
   /** Totals in other currencies are never converted — shown separately, not blended into the board currency. */
   incomesByCurrency: CurrencyBreakdownEntry[];
   expensesByCurrency: CurrencyBreakdownEntry[];
+  installmentActivity: InstallmentActivity;
 }
 
 export interface ConsolidatedBoardSummary {
@@ -106,6 +139,8 @@ export class ReportsService {
     private categoryModel: Model<CategoryDocument>,
     @InjectModel(PaymentMethod.name)
     private paymentMethodModel: Model<PaymentMethodDocument>,
+    @InjectModel(InstallmentPlan.name)
+    private installmentPlanModel: Model<InstallmentPlanDocument>,
     private participantsService: ParticipantsService,
     private boardsService: BoardsService,
   ) {}
@@ -114,6 +149,7 @@ export class ReportsService {
     boardId: string,
     yearMonth: string,
     userId: string,
+    options?: BoardCalendarReportOptions,
   ): Promise<BoardCalendarReport> {
     await this.participantsService.ensureParticipantAccess(boardId, userId);
     const board = await this.boardsService.findByIdOrFail(boardId);
@@ -124,20 +160,36 @@ export class ReportsService {
     const scopeBoards = scopeContext.map((item) => item.board);
     const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
     const { from, toExclusive } = parseYearMonth(yearMonth);
+    const upToDate = options?.upToDate;
+    // `upToDate` truncates to a calendar-day cutoff using the real occurrence
+    // date (expenseDate/incomeDate), not paymentYearMonth — used to compare
+    // an incomplete current month against the same elapsed-day window of the
+    // previous month, not the whole previous month.
+    const incomeUpperBound = upToDate
+      ? new Date(
+          Math.min(parseDateFrom(toExclusive).getTime(), upToDate.getTime()),
+        )
+      : parseDateFrom(toExclusive);
     const dateFilter = {
       $gte: parseDateFrom(from),
-      $lt: parseDateFrom(toExclusive),
+      $lt: incomeUpperBound,
     };
     const boardObjectId = new Types.ObjectId(boardId);
     const boardObjectIds = scopeBoards.map((item) => item._id);
+
+    const expenseFilter: Record<string, unknown> = {
+      tripId: { $in: boardObjectIds },
+      paymentYearMonth: yearMonth,
+    };
+    if (upToDate) {
+      expenseFilter.expenseDate = { $lte: upToDate };
+    }
 
     const [incomes, expenses] = await Promise.all([
       this.incomeModel
         .find({ tripId: boardObjectId, incomeDate: dateFilter })
         .lean(),
-      this.expenseModel
-        .find({ tripId: { $in: boardObjectIds }, paymentYearMonth: yearMonth })
-        .lean(),
+      this.expenseModel.find(expenseFilter).lean(),
     ]);
 
     const incomeTotals = new CurrencyBreakdownBuilder();
@@ -180,14 +232,16 @@ export class ReportsService {
     const totalIncomes = incomeTotals.totalFor(boardCurrency);
     const totalExpenses = expenseTotals.totalFor(boardCurrency);
 
-    const [byCategory, byPaymentMethod] = await Promise.all([
-      this.buildCategoryBreakdown(
-        boardObjectIds,
-        attributedExpenses,
-        boardCurrency,
-      ),
-      this.buildPaymentMethodBreakdown(attributedExpenses, boardCurrency),
-    ]);
+    const [byCategory, byPaymentMethod, installmentActivity] =
+      await Promise.all([
+        this.buildCategoryBreakdown(
+          boardObjectIds,
+          attributedExpenses,
+          boardCurrency,
+        ),
+        this.buildPaymentMethodBreakdown(attributedExpenses, boardCurrency),
+        this.buildInstallmentActivity(attributedExpenses, boardCurrency),
+      ]);
 
     return {
       boardId,
@@ -200,6 +254,7 @@ export class ReportsService {
       byPaymentMethod,
       incomesByCurrency: incomeTotals.otherThan(boardCurrency),
       expensesByCurrency: expenseTotals.otherThan(boardCurrency),
+      installmentActivity,
     };
   }
 
@@ -377,6 +432,78 @@ export class ReportsService {
     }
 
     return items.sort((a, b) => b.total - a.total);
+  }
+
+  private async buildInstallmentActivity(
+    expenses: Expense[],
+    boardCurrency: string,
+  ): Promise<InstallmentActivity> {
+    const installmentExpenses = expenses.filter(
+      (expense) => expense.installmentPlanId != null,
+    );
+
+    const totals = new CurrencyBreakdownBuilder();
+    for (const expense of installmentExpenses) {
+      totals.add(expense.currency, expense.amount);
+    }
+
+    if (installmentExpenses.length === 0) {
+      return {
+        totalAmount: totals.totalFor(boardCurrency),
+        count: 0,
+        startedPlans: [],
+        finishedPlans: [],
+      };
+    }
+
+    const planIds = [
+      ...new Set(
+        installmentExpenses.map((expense) =>
+          expense.installmentPlanId!.toString(),
+        ),
+      ),
+    ];
+    const plans = await this.installmentPlanModel
+      .find({ _id: { $in: planIds.map((id) => new Types.ObjectId(id)) } })
+      .lean();
+    const planById = new Map(plans.map((plan) => [plan._id.toString(), plan]));
+
+    const startedPlans: InstallmentPlanEvent[] = [];
+    const finishedPlans: InstallmentPlanEvent[] = [];
+
+    for (const expense of installmentExpenses) {
+      const planId = expense.installmentPlanId!.toString();
+      const plan = planById.get(planId);
+      const installmentNumber = expense.installmentNumber;
+      if (!plan || installmentNumber == null) continue;
+
+      const event: InstallmentPlanEvent = {
+        planId,
+        label: plan.label,
+        amount: expense.amount,
+        installmentNumber,
+        totalInstallments: plan.totalInstallments,
+      };
+
+      if (installmentNumber === plan.totalInstallments) {
+        finishedPlans.push(event);
+      }
+      // The first installment ever materialized as a real Expense document —
+      // 1..paidInstallments are a seed for pre-tracked cuotas and are never
+      // materialized, and a specific cuota may have been shifted to a
+      // different month, so this is robust to both instead of assuming
+      // startYearMonth + n lines up with a plain calendar count.
+      if (installmentNumber === plan.paidInstallments + 1) {
+        startedPlans.push(event);
+      }
+    }
+
+    return {
+      totalAmount: totals.totalFor(boardCurrency),
+      count: installmentExpenses.length,
+      startedPlans,
+      finishedPlans,
+    };
   }
 }
 

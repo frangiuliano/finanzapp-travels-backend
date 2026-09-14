@@ -17,6 +17,7 @@ import { PaymentMethodsModule } from './payment-methods/payment-methods.module';
 import { IncomesModule } from './incomes/incomes.module';
 import { BoardMonthBudgetsModule } from './board-month-budgets/board-month-budgets.module';
 import { ReportsModule } from './reports/reports.module';
+import { InsightsModule } from './insights/insights.module';
 import { RecurringIncomesModule } from './recurring-incomes/recurring-incomes.module';
 import { RecurringExpensesModule } from './recurring-expenses/recurring-expenses.module';
 import { InstallmentPlansModule } from './installment-plans/installment-plans.module';
@@ -66,6 +67,7 @@ import { environmentValidationSchema } from './config/env.validation';
     IncomesModule,
     BoardMonthBudgetsModule,
     ReportsModule,
+    InsightsModule,
     RecurringIncomesModule,
     RecurringExpensesModule,
     InstallmentPlansModule,
