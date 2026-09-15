@@ -301,7 +301,7 @@ export class ShortcutIntegrationsService {
         currency: dto.currency ?? context.board.currency,
         budgetId: dto.budgetId,
         expenseDate,
-        paymentYearMonth: expenseDate.slice(0, 7),
+        paymentYearMonth: dto.paymentYearMonth ?? expenseDate.slice(0, 7),
         paidByParticipantId: currentParticipant?.id,
         isDivisible: false,
         status: ExpenseStatus.PAID,

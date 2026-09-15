@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -52,6 +53,13 @@ export class CreateShortcutExpenseDto {
   @IsOptional()
   @IsISO8601({ strict: true })
   expenseDate?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, {
+    message: 'paymentYearMonth debe tener formato YYYY-MM',
+  })
+  paymentYearMonth?: string;
 
   @IsUUID('4')
   clientRequestId: string;
