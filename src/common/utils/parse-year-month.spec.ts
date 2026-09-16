@@ -4,6 +4,7 @@ import {
   getCurrentYearMonth,
   parseYearMonth,
   shiftYearMonth,
+  yearMonthFromUtcDate,
 } from './parse-year-month';
 
 describe('parseYearMonth', () => {
@@ -47,6 +48,25 @@ describe('shiftYearMonth', () => {
 describe('getCurrentYearMonth', () => {
   it('should format year and month', () => {
     expect(getCurrentYearMonth(new Date(2026, 7, 15))).toBe('2026-08');
+  });
+});
+
+describe('yearMonthFromUtcDate', () => {
+  it('reads a date-only value (parsed as UTC midnight) as its own calendar month', () => {
+    // How new Date('2027-06-01') actually parses: UTC midnight.
+    expect(yearMonthFromUtcDate(new Date('2027-06-01'))).toBe('2027-06');
+  });
+
+  it('does not roll back a day for timezones west of UTC (the bug this replaces getCurrentYearMonth for)', () => {
+    const utcMidnightJune1 = new Date(Date.UTC(2027, 5, 1, 0, 0, 0));
+    // getCurrentYearMonth would read this with LOCAL getters — on a host
+    // running west of UTC (e.g. Argentina, UTC-3) that rolls back to May 31
+    // local time and reports "2027-05" instead of "2027-06".
+    expect(yearMonthFromUtcDate(utcMidnightJune1)).toBe('2027-06');
+  });
+
+  it('rolls over December to January of the next year', () => {
+    expect(yearMonthFromUtcDate(new Date('2026-12-15'))).toBe('2026-12');
   });
 });
 

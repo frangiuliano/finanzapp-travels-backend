@@ -38,6 +38,7 @@ import { FxService } from '../fx/fx.service';
 import {
   getCurrentYearMonth,
   monthsBetweenYearMonths,
+  yearMonthFromUtcDate,
 } from '../common/utils/parse-year-month';
 import { MAX_PLANNING_HORIZON_MONTHS } from '../common/constants/recurring-horizon';
 
@@ -71,6 +72,44 @@ export interface GoalWithResult {
   goal: LeanGoal;
   selections: LeanSelection[];
   result: PlannerGoalResult;
+}
+
+export interface PrioritySummaryGoal {
+  id: string;
+  name: string;
+  icon?: string;
+  currency: string;
+  targetAmount: number;
+  priority: number;
+}
+
+export interface PrioritySummaryResult {
+  goal: PrioritySummaryGoal | null;
+  yearMonth: string;
+  computable?: boolean;
+  requiredMonthlyContribution?: number | null;
+  neededThisMonth?: number | null;
+  /** How much of yearMonth's own Restante proyectado counts toward this goal, capped at what's still missing from targetAmount (never at requiredMonthlyContribution — see GoalsService.getPrioritySummary). */
+  thisMonthContribution?: number | null;
+  isFullyCovered?: boolean;
+}
+
+/**
+ * Same deterministic order as GoalsPlannerService.compareGoalsByPriority
+ * (priority ascending, then nearest targetDate, then oldest createdAt),
+ * applied directly to raw Goal documents — used where pulling the full
+ * planner pipeline in just to pick "the" top goal would be overkill.
+ */
+function compareLeanGoalsByPriority(a: LeanGoal, b: LeanGoal): number {
+  if (a.priority !== b.priority) return a.priority - b.priority;
+  const aDate = a.targetDate
+    ? yearMonthFromUtcDate(new Date(a.targetDate))
+    : '9999-12';
+  const bDate = b.targetDate
+    ? yearMonthFromUtcDate(new Date(b.targetDate))
+    : '9999-12';
+  if (aDate !== bDate) return aDate < bDate ? -1 : 1;
+  return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
 }
 
 @Injectable()
@@ -131,6 +170,186 @@ export class GoalsService {
     );
     await this.captureCheckpoints(board._id, [goal], plannerResult);
     return this.buildResponse([goal], selectionsByGoal, plannerResult).goals[0];
+  }
+
+  /**
+   * Home widget support: for the single highest-priority active goal,
+   * simulates month by month — starting from currentComputableValueJoint —
+   * how much of each month's own real Restante proyectado goes toward the
+   * goal, capped only by what's still missing from targetAmount (never by
+   * the flat requiredMonthlyContribution). This is the exact same rule
+   * GoalsPlannerService.simulateWaterfall uses, so thisMonthContribution and
+   * neededThisMonth always agree with estimatedCompletionYearMonthJoint: a
+   * goal that finishes ahead of its flat pace does so because some month
+   * really did contribute more than the flat requirement, and this method
+   * reports that real amount rather than an artificially capped one.
+   * Display-only — never persists anything, never feeds back into Restante
+   * proyectado, disponible, or the viability computed by evaluateGoals().
+   */
+  async getPrioritySummary(
+    userId: string,
+    boardId: string,
+    requestedYearMonth?: string,
+  ): Promise<PrioritySummaryResult> {
+    await this.participantsService.ensureBoardParticipantAccess(
+      boardId,
+      userId,
+    );
+    const board = await this.requireBoard(boardId);
+    const currentYearMonth = getCurrentYearMonth();
+    const yearMonth =
+      requestedYearMonth && requestedYearMonth > currentYearMonth
+        ? requestedYearMonth
+        : currentYearMonth;
+
+    const activeGoals = await this.goalModel
+      .find({ boardId: board._id, status: GoalStatus.ACTIVE })
+      .lean<LeanGoal[]>();
+    if (!activeGoals.length) {
+      return { goal: null, yearMonth };
+    }
+
+    const topGoal = [...activeGoals].sort(compareLeanGoalsByPriority)[0];
+    const goalSummary = {
+      id: topGoal._id.toString(),
+      name: topGoal.name,
+      icon: topGoal.icon,
+      currency: topGoal.currency,
+      targetAmount: topGoal.targetAmount,
+      priority: topGoal.priority,
+    };
+
+    const { plannerResult } = await this.evaluateGoals(userId, board, [
+      topGoal,
+    ]);
+    const result = plannerResult.goals[0];
+    const requiredMonthlyContribution =
+      result.requiredMonthlyContributionIndividual ??
+      topGoal.desiredMonthlyContribution ??
+      null;
+
+    // Once the goal is projected to already be finished by yearMonth, there
+    // is nothing left to plan for that month — without this cutoff the
+    // cumulative catch-up math below has no natural stopping point and
+    // would keep reporting a (mostly $0) figure for every month forever,
+    // including years past completion.
+    const estimatedCompletionYearMonth =
+      result.estimatedCompletionYearMonthJoint;
+    if (
+      estimatedCompletionYearMonth &&
+      yearMonth > estimatedCompletionYearMonth
+    ) {
+      return {
+        goal: goalSummary,
+        yearMonth,
+        computable: true,
+        requiredMonthlyContribution,
+        neededThisMonth: null,
+        isFullyCovered: true,
+      };
+    }
+
+    if (
+      !result.forecastCapacityComputable ||
+      requiredMonthlyContribution === null
+    ) {
+      return {
+        goal: goalSummary,
+        yearMonth,
+        computable: false,
+        requiredMonthlyContribution,
+        neededThisMonth: null,
+        isFullyCovered: false,
+      };
+    }
+
+    let fxRate = 1;
+    if (topGoal.currency !== board.baseCurrency) {
+      if (!topGoal.useEstimatedFxForForecast) {
+        return {
+          goal: goalSummary,
+          yearMonth,
+          computable: false,
+          requiredMonthlyContribution,
+          neededThisMonth: null,
+          isFullyCovered: false,
+        };
+      }
+      try {
+        const snapshot = await this.fxService.resolveSnapshot(
+          board.baseCurrency,
+          topGoal.currency,
+        );
+        fxRate = snapshot.fxRateToBoardCurrency;
+      } catch (error) {
+        this.logger.warn(
+          `No se pudo resolver la cotización para el widget de Inicio: ${error instanceof Error ? error.message : error}`,
+        );
+        return {
+          goal: goalSummary,
+          yearMonth,
+          computable: false,
+          requiredMonthlyContribution,
+          neededThisMonth: null,
+          isFullyCovered: false,
+        };
+      }
+    }
+
+    const monthsCount = Math.max(
+      1,
+      monthsBetweenYearMonths(currentYearMonth, yearMonth) + 1,
+    );
+    const capacity = await this.buildCapacitySeries(
+      board._id.toString(),
+      userId,
+      currentYearMonth,
+      monthsCount,
+    );
+
+    // Mirrors GoalsPlannerService.simulateWaterfall exactly, so this number
+    // always agrees with estimatedCompletionYearMonthJoint above: a month's
+    // contribution is capped by what's *still missing from the goal's full
+    // target* (currentComputableValueJoint credited once at the start, then
+    // every prior month's own real Restante proyectado, uncapped) — never
+    // by the flat monthly requirement. Capping at the flat pace here would
+    // under-report what a strong month actually contributes, which is
+    // exactly what lets the goal finish ahead of "Deberías aportar" pace in
+    // the first place.
+    let missingBeforeThisMonth = Math.max(
+      0,
+      topGoal.targetAmount - result.currentComputableValueJoint,
+    );
+    let thisMonthContribution = 0;
+    for (const month of capacity) {
+      const availableThisMonth = Math.max(0, month.projectedRemaining) * fxRate;
+      if (month.yearMonth === yearMonth) {
+        thisMonthContribution = Math.min(
+          missingBeforeThisMonth,
+          availableThisMonth,
+        );
+        break;
+      }
+      missingBeforeThisMonth -= Math.min(
+        missingBeforeThisMonth,
+        availableThisMonth,
+      );
+    }
+    const neededThisMonth = Math.max(
+      0,
+      missingBeforeThisMonth - thisMonthContribution,
+    );
+    const isFullyCovered = missingBeforeThisMonth <= 0;
+
+    return {
+      goal: goalSummary,
+      yearMonth,
+      computable: true,
+      requiredMonthlyContribution,
+      neededThisMonth,
+      thisMonthContribution,
+      isFullyCovered,
+    };
   }
 
   async createGoal(dto: CreateGoalDto, userId: string, boardId: string) {
@@ -500,7 +719,7 @@ export class GoalsService {
         targetAmount: goal.targetAmount,
         currency: goal.currency,
         targetYearMonth: goal.targetDate
-          ? getCurrentYearMonth(new Date(goal.targetDate))
+          ? yearMonthFromUtcDate(new Date(goal.targetDate))
           : null,
         desiredMonthlyContribution: goal.desiredMonthlyContribution ?? null,
         priority: goal.priority,
@@ -548,7 +767,7 @@ export class GoalsService {
         needed = HORIZON_MONTHS;
         break;
       }
-      const targetYearMonth = getCurrentYearMonth(new Date(goal.targetDate));
+      const targetYearMonth = yearMonthFromUtcDate(new Date(goal.targetDate));
       const months = monthsBetweenYearMonths(currentYearMonth, targetYearMonth);
       needed = Math.max(needed, Math.min(HORIZON_MONTHS, Math.max(1, months)));
     }

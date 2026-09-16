@@ -150,6 +150,285 @@ describe('GoalsService', () => {
     expect(result.message).toContain('suficientes mediciones');
   });
 
+  describe('getPrioritySummary', () => {
+    it('returns goal: null when the board has no active goals', async () => {
+      goalModel.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+
+      const result = await service.getPrioritySummary(
+        userId,
+        boardId.toString(),
+      );
+
+      expect(result.goal).toBeNull();
+    });
+
+    it('picks the goal with priority 1 over a lower-priority one', async () => {
+      const lowPriority = {
+        _id: new Types.ObjectId(),
+        name: 'Prioridad baja',
+        priority: 5,
+        currency: 'ARS',
+        targetAmount: 1000,
+        status: 'active',
+        createdAt: new Date('2026-01-01'),
+        useEstimatedFxForForecast: false,
+      };
+      const highPriority = {
+        _id: new Types.ObjectId(),
+        name: 'Prioridad alta',
+        priority: 1,
+        currency: 'ARS',
+        targetAmount: 1000,
+        status: 'active',
+        createdAt: new Date('2026-01-01'),
+        useEstimatedFxForForecast: false,
+      };
+      goalModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([lowPriority, highPriority]),
+      });
+      selectionModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      forecastService.getMonthlyForecastRange.mockResolvedValue([
+        { yearMonth: '2026-09', planned: { projectedRemaining: 1000 } },
+      ]);
+      planner.evaluate.mockReturnValue({
+        goals: [
+          {
+            goalId: highPriority._id.toString(),
+            requiredMonthlyContributionIndividual: 1000,
+            forecastCapacityComputable: true,
+            currentComputableValueJoint: 0,
+          },
+        ],
+      });
+
+      const result = await service.getPrioritySummary(
+        userId,
+        boardId.toString(),
+      );
+
+      expect(result.goal?.id).toBe(highPriority._id.toString());
+    });
+
+    it('shows nothing still needed once prior months already banked enough to fully fund the goal', async () => {
+      const goal = {
+        _id: new Types.ObjectId(),
+        name: 'Viaje',
+        priority: 1,
+        currency: 'ARS',
+        targetAmount: 4000,
+        status: 'active',
+        createdAt: new Date('2026-01-01'),
+        useEstimatedFxForForecast: false,
+      };
+      goalModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([goal]),
+      });
+      selectionModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      // Ya tiene 1.000 hoy (falta 3.000). Sep y oct aportan 1.500 cada uno
+      // (real, sin techo) — para nov ya está completo.
+      forecastService.getMonthlyForecastRange.mockResolvedValue([
+        { yearMonth: '2026-09', planned: { projectedRemaining: 1500 } },
+        { yearMonth: '2026-10', planned: { projectedRemaining: 1500 } },
+        { yearMonth: '2026-11', planned: { projectedRemaining: 1500 } },
+      ]);
+      planner.evaluate.mockReturnValue({
+        goals: [
+          {
+            goalId: goal._id.toString(),
+            requiredMonthlyContributionIndividual: 1000,
+            forecastCapacityComputable: true,
+            currentComputableValueJoint: 1000,
+          },
+        ],
+      });
+
+      const result = await service.getPrioritySummary(
+        userId,
+        boardId.toString(),
+        '2026-11',
+      );
+
+      expect(result.neededThisMonth).toBe(0);
+      expect(result.isFullyCovered).toBe(true);
+      expect(result.thisMonthContribution).toBe(0);
+    });
+
+    it("carries whatever a month's own capacity couldn't cover into neededThisMonth for that same month", async () => {
+      const goal = {
+        _id: new Types.ObjectId(),
+        name: 'Viaje',
+        priority: 1,
+        currency: 'ARS',
+        targetAmount: 4000,
+        status: 'active',
+        createdAt: new Date('2026-01-01'),
+        useEstimatedFxForForecast: false,
+      };
+      goalModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([goal]),
+      });
+      selectionModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      // Ya tiene 1.000 (falta 3.000). Sep aporta 1.000, oct 1.500 (quedan
+      // 500 por cubrir), y nov solo tiene 200 de restante proyectado — no
+      // le alcanza para cerrar esos 500.
+      forecastService.getMonthlyForecastRange.mockResolvedValue([
+        { yearMonth: '2026-09', planned: { projectedRemaining: 1000 } },
+        { yearMonth: '2026-10', planned: { projectedRemaining: 1500 } },
+        { yearMonth: '2026-11', planned: { projectedRemaining: 200 } },
+      ]);
+      planner.evaluate.mockReturnValue({
+        goals: [
+          {
+            goalId: goal._id.toString(),
+            requiredMonthlyContributionIndividual: 1000,
+            forecastCapacityComputable: true,
+            currentComputableValueJoint: 1000,
+          },
+        ],
+      });
+
+      const result = await service.getPrioritySummary(
+        userId,
+        boardId.toString(),
+        '2026-11',
+      );
+
+      expect(result.isFullyCovered).toBe(false);
+      expect(result.thisMonthContribution).toBe(200);
+      expect(result.neededThisMonth).toBe(300);
+    });
+
+    it("caps thisMonthContribution at the month's own real capacity when it falls short of what's still missing", async () => {
+      const goal = {
+        _id: new Types.ObjectId(),
+        name: 'Viaje',
+        priority: 1,
+        currency: 'ARS',
+        targetAmount: 1000,
+        status: 'active',
+        createdAt: new Date('2026-01-01'),
+        useEstimatedFxForForecast: false,
+      };
+      goalModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([goal]),
+      });
+      selectionModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      forecastService.getMonthlyForecastRange.mockResolvedValue([
+        { yearMonth: '2026-09', planned: { projectedRemaining: 600 } },
+      ]);
+      planner.evaluate.mockReturnValue({
+        goals: [
+          {
+            goalId: goal._id.toString(),
+            requiredMonthlyContributionIndividual: 1000,
+            forecastCapacityComputable: true,
+            currentComputableValueJoint: 0,
+          },
+        ],
+      });
+
+      const result = await service.getPrioritySummary(
+        userId,
+        boardId.toString(),
+        '2026-09',
+      );
+
+      expect(result.thisMonthContribution).toBe(600);
+      expect(result.neededThisMonth).toBe(400);
+    });
+
+    it('reports not computable when the top goal has no target date and no desired monthly contribution', async () => {
+      const goal = {
+        _id: new Types.ObjectId(),
+        name: 'Sin plan',
+        priority: 1,
+        currency: 'ARS',
+        targetAmount: 1000,
+        status: 'active',
+        createdAt: new Date('2026-01-01'),
+        useEstimatedFxForForecast: false,
+      };
+      goalModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([goal]),
+      });
+      selectionModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      forecastService.getMonthlyForecastRange.mockResolvedValue([
+        { yearMonth: '2026-09', planned: { projectedRemaining: 1000 } },
+      ]);
+      planner.evaluate.mockReturnValue({
+        goals: [
+          {
+            goalId: goal._id.toString(),
+            requiredMonthlyContributionIndividual: null,
+            forecastCapacityComputable: true,
+          },
+        ],
+      });
+
+      const result = await service.getPrioritySummary(
+        userId,
+        boardId.toString(),
+      );
+
+      expect(result.computable).toBe(false);
+      expect(result.neededThisMonth).toBeNull();
+    });
+
+    it("stops reporting a figure for any month past the goal's own projected completion", async () => {
+      const goal = {
+        _id: new Types.ObjectId(),
+        name: 'Casa',
+        priority: 1,
+        currency: 'ARS',
+        targetAmount: 26000,
+        status: 'active',
+        createdAt: new Date('2026-01-01'),
+        useEstimatedFxForForecast: false,
+      };
+      goalModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([goal]),
+      });
+      selectionModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      // Planner says this goal will be done by 2026-11 — asking about a
+      // much later month shouldn't run the catch-up math at all, let alone
+      // report a perpetual $0.
+      planner.evaluate.mockReturnValue({
+        goals: [
+          {
+            goalId: goal._id.toString(),
+            requiredMonthlyContributionIndividual: 1000,
+            forecastCapacityComputable: true,
+            estimatedCompletionYearMonthJoint: '2026-11',
+          },
+        ],
+      });
+
+      const result = await service.getPrioritySummary(
+        userId,
+        boardId.toString(),
+        '2027-08',
+      );
+
+      expect(result.neededThisMonth).toBeNull();
+      expect(result.isFullyCovered).toBe(true);
+      // Only the one call evaluateGoals() makes for the planner itself — the
+      // cutoff must skip the extra cumulative-sum fetch entirely.
+      expect(forecastService.getMonthlyForecastRange).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('rejects reading a goal id that belongs to a different board', async () => {
     goalModel.findOne.mockImplementation(
       (query: { boardId: Types.ObjectId }) => {
