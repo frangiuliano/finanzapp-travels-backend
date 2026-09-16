@@ -49,6 +49,23 @@ export function monthsBetweenYearMonths(
   return (toYear - fromYear) * 12 + (toMonth - fromMonth);
 }
 
+/**
+ * YYYY-MM for a date-only value (e.g. Goal.targetDate), read in UTC.
+ *
+ * A date-only string like "2027-06-01" is parsed by `new Date(...)` as UTC
+ * midnight. Reading it back with the *local* getters (as getCurrentYearMonth
+ * does — correctly, for real "now" timestamps) rolls it back a calendar day
+ * on any server running west of UTC (e.g. Argentina, UTC-3), turning June 1
+ * 00:00 UTC into May 31 in local time and silently shifting the target
+ * month by one. Always use this — not getCurrentYearMonth — for a stored
+ * date-only field.
+ */
+export function yearMonthFromUtcDate(date: Date): string {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
 /** Number of real calendar days in a given YYYY-MM month (handles leap years). */
 export function daysInYearMonth(yearMonth: string): number {
   const [yearStr, monthStr] = yearMonth.split('-');

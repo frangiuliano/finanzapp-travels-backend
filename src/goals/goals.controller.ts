@@ -15,6 +15,7 @@ import {
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UserDocument } from '../users/user.schema';
+import { parseYearMonth } from '../common/utils/parse-year-month';
 import {
   CreateGoalDto,
   PreviewGoalDto,
@@ -33,6 +34,20 @@ export class GoalsController {
     return this.goalsService.listGoals(
       user._id.toString(),
       this.requireBoardId(boardId),
+    );
+  }
+
+  @Get('priority-summary')
+  getPrioritySummary(
+    @Query('boardId') boardId: string,
+    @GetUser() user: UserDocument,
+    @Query('yearMonth') yearMonth?: string,
+  ) {
+    if (yearMonth) parseYearMonth(yearMonth);
+    return this.goalsService.getPrioritySummary(
+      user._id.toString(),
+      this.requireBoardId(boardId),
+      yearMonth,
     );
   }
 
