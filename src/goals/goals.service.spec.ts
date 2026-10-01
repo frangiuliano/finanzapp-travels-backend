@@ -151,6 +151,15 @@ describe('GoalsService', () => {
   });
 
   describe('getPrioritySummary', () => {
+    beforeEach(() => {
+      // These forecasts model September through November, not the run date.
+      jest.useFakeTimers({ now: new Date('2026-09-15T12:00:00Z') });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
     it('returns goal: null when the board has no active goals', async () => {
       goalModel.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
 
