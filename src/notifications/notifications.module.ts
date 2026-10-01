@@ -5,6 +5,7 @@ import { HandlebarsAdapter } from '@nestjs-modules/mailer/adapters/handlebars.ad
 import { NotificationsService } from './notifications.service';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { mailerDefaults } from './mailer-defaults';
 
 @Module({
   imports: [
@@ -36,9 +37,9 @@ import { existsSync } from 'fs';
                 pass: cleanPass,
               },
             },
-            defaults: {
+            defaults: mailerDefaults({
               from: `"${configService.get('APP_NAME', 'FinanzApp')}" <${configService.get('SMTP_FROM') || user}>`,
-            },
+            }),
             template: {
               dir: (() => {
                 const distPath = join(__dirname, 'templates');
@@ -68,9 +69,9 @@ import { existsSync } from 'fs';
               pass: cleanPass,
             },
           },
-          defaults: {
+          defaults: mailerDefaults({
             from: `"${configService.get('APP_NAME', 'FinanzApp')}" <${configService.get('SMTP_FROM') || user}>`,
-          },
+          }),
           template: {
             dir: (() => {
               const distPath = join(__dirname, 'templates');
