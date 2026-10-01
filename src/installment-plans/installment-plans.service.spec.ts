@@ -28,11 +28,19 @@ describe('InstallmentPlansService materialization', () => {
       find: jest.fn().mockResolvedValue([plan]),
     };
     const expenseModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest
+          .fn()
+          .mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      }),
       deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
       bulkWrite: jest.fn().mockResolvedValue({ upsertedCount: 2 }),
       updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
     };
     const participantModel = {
+      find: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{ _id: participantId, userId }]),
+      }),
       findOne: jest.fn().mockResolvedValue({ _id: participantId }),
     };
     const participantsService = {

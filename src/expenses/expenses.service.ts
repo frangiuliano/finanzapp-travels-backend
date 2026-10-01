@@ -40,8 +40,10 @@ import { ExpenseFxPolicy, ExpenseFxPurpose } from './expense.schema';
 import { getExpenseAmountInBoardCurrency } from '../common/utils/expense-board-currency';
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
+import { parseYearMonth } from '../common/utils/parse-year-month';
 
 export interface ExpenseListFilters {
+  recentLimit?: number;
   budgetId?: string;
   status?: ExpenseStatus;
   categoryId?: string;
@@ -711,6 +713,7 @@ export class ExpensesService implements OnModuleInit {
     const isEverydayAggregation = scopeBoards[0].type === BoardType.EVERYDAY;
 
     const query: {
+      $and?: Record<string, unknown>[];
       tripId: Types.ObjectId | { $in: Types.ObjectId[] };
       budgetId?: Types.ObjectId;
       status?: ExpenseStatus;
@@ -759,13 +762,48 @@ export class ExpensesService implements OnModuleInit {
       }
     }
 
-    const expenses = await this.expenseModel
+    if (filters.recentLimit && isEverydayAggregation) {
+      query.$and = [
+        {
+          $or: scopeContext.map(({ board, participantId }) =>
+            board.type === BoardType.TRAVEL
+              ? {
+                  tripId: board._id,
+                  $or: [
+                    {
+                      isDivisible: true,
+                      splits: {
+                        $elemMatch: { participantId, amount: { $ne: 0 } },
+                      },
+                    },
+                    {
+                      isDivisible: { $ne: true },
+                      paidByParticipantId: participantId,
+                      amount: { $ne: 0 },
+                    },
+                  ],
+                }
+              : { tripId: board._id },
+          ),
+        },
+      ];
+    }
+    const expenseQuery = this.expenseModel
       .find(query)
-      .populate(EXPENSE_RELATION_POPULATES)
-      .sort({ expenseDate: -1, createdAt: -1 })
-      .lean();
+      .populate(
+        filters.recentLimit
+          ? [{ path: 'categoryId', select: '_id name icon color isActive' }]
+          : EXPENSE_RELATION_POPULATES,
+      )
+      .sort(
+        filters.recentLimit
+          ? { createdAt: -1, _id: -1 }
+          : { expenseDate: -1, createdAt: -1 },
+      );
+    if (filters.recentLimit) expenseQuery.limit(filters.recentLimit);
+    const expenses = await expenseQuery.lean();
 
-    const board = await this.boardsService.findByIdOrFail(tripId);
+    const board = scopeBoards[0];
     const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
     const originalAmountById = new Map<string, number>();
     const attributedExpenses = expenses.flatMap((expense) => {
@@ -801,6 +839,18 @@ export class ExpensesService implements OnModuleInit {
         });
       }),
     );
+  }
+
+  async findRecentByMonth(
+    boardId: string,
+    userId: string,
+    yearMonth: string,
+  ): Promise<Expense[]> {
+    parseYearMonth(yearMonth);
+    return this.findAll(boardId, userId, {
+      paymentYearMonth: yearMonth,
+      recentLimit: 5,
+    });
   }
 
   async findOne(id: string, userId: string): Promise<Expense> {

@@ -90,6 +90,23 @@ export class ExpensesController {
     };
   }
 
+  @Get('recent')
+  async findRecent(
+    @Query('boardId') boardId: string,
+    @Query('yearMonth') yearMonth: string,
+    @GetUser('_id') userId: string,
+  ) {
+    if (!boardId || !yearMonth)
+      throw new BadRequestException('boardId y yearMonth son requeridos');
+    return {
+      expenses: await this.expensesService.findRecentByMonth(
+        boardId,
+        userId,
+        yearMonth,
+      ),
+    };
+  }
+
   @Get('trip/:tripId/summary')
   async getTripExpenseSummary(
     @Param('tripId') tripId: string,

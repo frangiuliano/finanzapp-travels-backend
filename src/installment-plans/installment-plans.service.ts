@@ -5,7 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InFlightWork } from '../common/utils/in-flight-work';
+import { Model, Types, AnyBulkWriteOperation } from 'mongoose';
 import {
   InstallmentPlan,
   InstallmentPlanDocument,
@@ -49,6 +50,7 @@ import { buildOccurrenceDate } from '../common/utils/iterate-year-months';
 
 @Injectable()
 export class InstallmentPlansService {
+  private readonly occurrenceWork = new InFlightWork<void>();
   private readonly logger = new Logger(InstallmentPlansService.name);
 
   constructor(
@@ -444,6 +446,16 @@ export class InstallmentPlansService {
     boardId: string,
     userId: string,
   ): Promise<void> {
+    await this.participantsService.ensureParticipantAccess(boardId, userId);
+    return this.occurrenceWork.run(`${boardId}:${userId}`, 1, () =>
+      this.syncBoardOccurrences(boardId, userId),
+    );
+  }
+
+  private async syncBoardOccurrences(
+    boardId: string,
+    userId: string,
+  ): Promise<void> {
     const t0 = Date.now();
     await this.participantsService.ensureParticipantAccess(boardId, userId);
     const plans = await this.installmentPlanModel.find({
@@ -451,10 +463,42 @@ export class InstallmentPlansService {
       isActive: true,
     });
     const t1 = Date.now();
-
+    const [participants, existing] = await Promise.all([
+      this.participantModel
+        .find({ tripId: new Types.ObjectId(boardId) })
+        .lean(),
+      this.expenseModel
+        .find({
+          tripId: new Types.ObjectId(boardId),
+          installmentPlanId: { $in: plans.map((p) => p._id) },
+        })
+        .select('occurrenceKey')
+        .lean(),
+    ]);
+    const operations: Parameters<typeof this.expenseModel.bulkWrite>[0] = [];
+    const context = {
+      participants,
+      operations,
+      existingKeys: new Set(existing.map((e) => e.occurrenceKey)),
+    };
     await Promise.all(
-      plans.map((plan) => this.syncExpenseOccurrences(plan, userId, false)),
+      plans.map((plan) =>
+        this.syncExpenseOccurrences(plan, userId, false, context),
+      ),
     );
+    if (operations.length)
+      await this.expenseModel.bulkWrite(operations, { ordered: false });
+    if (plans.length)
+      await this.expenseModel.updateMany(
+        {
+          tripId: new Types.ObjectId(boardId),
+          installmentPlanId: { $in: plans.map((p) => p._id) },
+          status: ExpenseStatus.PENDING,
+          skippedAt: { $exists: false },
+          expenseDate: { $lte: new Date() },
+        },
+        { $set: { status: ExpenseStatus.PAID } },
+      );
     const t2 = Date.now();
 
     this.logger.debug(
@@ -466,6 +510,11 @@ export class InstallmentPlansService {
     plan: InstallmentPlanDocument,
     fallbackUserId: string,
     replacePending: boolean,
+    context?: {
+      participants: Array<{ _id: Types.ObjectId; userId?: Types.ObjectId }>;
+      operations: AnyBulkWriteOperation<Expense>[];
+      existingKeys: Set<string | undefined>;
+    },
   ): Promise<void> {
     if (replacePending) {
       await this.expenseModel.deleteMany({
@@ -476,16 +525,22 @@ export class InstallmentPlansService {
     }
     if (!plan.isActive) return;
 
-    const payer = await this.participantModel.findOne({
-      tripId: plan.tripId,
-      userId: plan.createdBy,
-    });
-    const fallbackPayer = payer
-      ? null
+    const payer = context
+      ? context.participants.find(
+          (p) => String(p.userId) === String(plan.createdBy),
+        )
       : await this.participantModel.findOne({
           tripId: plan.tripId,
-          userId: new Types.ObjectId(fallbackUserId),
+          userId: plan.createdBy,
         });
+    const fallbackPayer = payer
+      ? null
+      : context
+        ? context.participants.find((p) => String(p.userId) === fallbackUserId)
+        : await this.participantModel.findOne({
+            tripId: plan.tripId,
+            userId: new Types.ObjectId(fallbackUserId),
+          });
     const paidByParticipantId = payer?._id ?? fallbackPayer?._id;
     if (!paidByParticipantId) return;
 
@@ -504,6 +559,7 @@ export class InstallmentPlansService {
       const status =
         expenseDate <= now ? ExpenseStatus.PAID : ExpenseStatus.PENDING;
       const occurrenceKey = `installment:${plan._id.toString()}:${installmentNumber}`;
+      if (context?.existingKeys.has(occurrenceKey)) continue;
 
       bulkOps.push({
         updateOne: {
@@ -538,6 +594,10 @@ export class InstallmentPlansService {
       });
     }
 
+    if (context) {
+      context.operations.push(...bulkOps);
+      return;
+    }
     if (bulkOps.length > 0) {
       await this.expenseModel.bulkWrite(bulkOps, { ordered: false });
     }

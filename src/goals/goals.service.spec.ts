@@ -302,6 +302,7 @@ describe('GoalsService', () => {
       expect(result.isFullyCovered).toBe(false);
       expect(result.thisMonthContribution).toBe(200);
       expect(result.neededThisMonth).toBe(300);
+      expect(forecastService.getMonthlyForecastRange).toHaveBeenCalledTimes(1);
     });
 
     it("caps thisMonthContribution at the month's own real capacity when it falls short of what's still missing", async () => {

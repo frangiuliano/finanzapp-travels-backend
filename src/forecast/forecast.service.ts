@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { IncomesService } from '../incomes/incomes.service';
+import {
+  IncomesService,
+  MonthlyBoardSummary,
+} from '../incomes/incomes.service';
 import { InstallmentPlansService } from '../installment-plans/installment-plans.service';
 import { RecurringMaterializationService } from '../recurring-materialization/recurring-materialization.service';
 import {
@@ -150,12 +153,15 @@ export class ForecastService {
     boardId: string,
     yearMonth: string,
     userId: string,
+    loaded?: {
+      summary: MonthlyBoardSummary;
+      incomes: Income[];
+      expenses: Expense[];
+    },
   ): Promise<MonthlyForecast> {
-    const actualSummary = await this.incomesService.getMonthlySummary(
-      boardId,
-      yearMonth,
-      userId,
-    );
+    const actualSummary =
+      loaded?.summary ??
+      (await this.incomesService.getMonthlySummary(boardId, yearMonth, userId));
 
     const boardCurrency = actualSummary.currency;
     const currentYearMonth = getCurrentYearMonth();
@@ -168,24 +174,26 @@ export class ForecastService {
     };
     const boardObjectId = new Types.ObjectId(boardId);
 
-    const [materializedIncomes, materializedExpenses] = await Promise.all([
-      this.incomeModel
-        .find({
-          tripId: boardObjectId,
-          recurringIncomeId: { $exists: true },
-          incomeDate: dateFilter,
-          skippedAt: { $exists: false },
-        })
-        .lean(),
-      this.expenseModel
-        .find({
-          tripId: boardObjectId,
-          recurringExpenseId: { $exists: true },
-          paymentYearMonth: yearMonth,
-          skippedAt: { $exists: false },
-        })
-        .lean(),
-    ]);
+    const [materializedIncomes, materializedExpenses] = loaded
+      ? [loaded.incomes, loaded.expenses]
+      : await Promise.all([
+          this.incomeModel
+            .find({
+              tripId: boardObjectId,
+              recurringIncomeId: { $exists: true },
+              incomeDate: dateFilter,
+              skippedAt: { $exists: false },
+            })
+            .lean(),
+          this.expenseModel
+            .find({
+              tripId: boardObjectId,
+              recurringExpenseId: { $exists: true },
+              paymentYearMonth: yearMonth,
+              skippedAt: { $exists: false },
+            })
+            .lean(),
+        ]);
 
     const plannedIncomes: ForecastLineItem[] = [];
     const plannedIncomeTotals = new CurrencyBreakdownBuilder();
@@ -285,14 +293,57 @@ export class ForecastService {
       ),
       this.installmentPlansService.ensureExpenseOccurrences(boardId, userId),
     ]);
-    const results: MonthlyForecast[] = [];
-    for (let index = 0; index < boundedMonthsCount; index++) {
-      const yearMonth = shiftYearMonth(startYearMonth, index);
-      results.push(
-        await this.computeMonthlyForecast(boardId, yearMonth, userId),
-      );
+    const endYearMonth = shiftYearMonth(startYearMonth, boundedMonthsCount - 1);
+    const [summaries, incomes, expenses] = await Promise.all([
+      this.incomesService.getMonthlySummaryRange(
+        boardId,
+        startYearMonth,
+        boundedMonthsCount,
+        userId,
+      ),
+      this.incomeModel
+        .find({
+          tripId: new Types.ObjectId(boardId),
+          recurringIncomeId: { $exists: true },
+          skippedAt: { $exists: false },
+          incomeDate: {
+            $gte: new Date(parseYearMonth(startYearMonth).from),
+            $lt: new Date(parseYearMonth(endYearMonth).toExclusive),
+          },
+        })
+        .lean(),
+      this.expenseModel
+        .find({
+          tripId: new Types.ObjectId(boardId),
+          recurringExpenseId: { $exists: true },
+          skippedAt: { $exists: false },
+          paymentYearMonth: { $gte: startYearMonth, $lte: endYearMonth },
+        })
+        .lean(),
+    ]);
+    const incomesByMonth = new Map<string, Income[]>();
+    const expensesByMonth = new Map<string, Expense[]>();
+    for (const income of incomes) {
+      const month = new Date(income.incomeDate).toISOString().slice(0, 7);
+      const items = incomesByMonth.get(month) ?? [];
+      items.push(income);
+      incomesByMonth.set(month, items);
     }
-    return results;
+    for (const expense of expenses) {
+      const month = expense.paymentYearMonth!;
+      const items = expensesByMonth.get(month) ?? [];
+      items.push(expense);
+      expensesByMonth.set(month, items);
+    }
+    return Promise.all(
+      summaries.map((summary) =>
+        this.computeMonthlyForecast(boardId, summary.yearMonth, userId, {
+          summary,
+          incomes: incomesByMonth.get(summary.yearMonth) ?? [],
+          expenses: expensesByMonth.get(summary.yearMonth) ?? [],
+        }),
+      ),
+    );
   }
 
   async ensureHorizon(boardId: string, userId: string, monthsAhead?: number) {

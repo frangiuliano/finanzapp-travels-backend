@@ -17,7 +17,11 @@ import { UpdateIncomeDto } from './dto/update-income.dto';
 import { ParticipantsService } from '../participants/participants.service';
 import { BoardsService } from '../trips/trips.service';
 import { resolveBoardId } from '../common/utils/resolve-board-id';
-import { parseYearMonth } from '../common/utils/parse-year-month';
+import {
+  parseYearMonth,
+  shiftYearMonth,
+  yearMonthFromUtcDate,
+} from '../common/utils/parse-year-month';
 import { DEFAULT_CURRENCY } from '../common/constants/currencies';
 import { getPersonalExpenseAmount } from '../common/utils/personal-expense-attribution';
 import {
@@ -109,6 +113,24 @@ export class IncomesService {
     return this.incomeModel
       .find({ tripId: new Types.ObjectId(boardId) })
       .sort({ incomeDate: -1, createdAt: -1 })
+      .lean();
+  }
+
+  async findRecentByMonth(
+    boardId: string,
+    userId: string,
+    yearMonth: string,
+  ): Promise<Income[]> {
+    const { from, toExclusive } = parseYearMonth(yearMonth);
+    await this.participantsService.ensureParticipantAccess(boardId, userId);
+    return this.incomeModel
+      .find({
+        tripId: new Types.ObjectId(boardId),
+        incomeDate: { $gte: new Date(from), $lt: new Date(toExclusive) },
+        $or: [{ status: IncomeStatus.CONFIRMED }, { status: null }],
+      })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(5)
       .lean();
   }
 
@@ -260,6 +282,100 @@ export class IncomesService {
       this.expenseModel.find(expenseQuery).lean(),
     ]);
 
+    return this.summarizeMonthly(
+      boardId,
+      yearMonth,
+      boardCurrency,
+      board.type,
+      expenseScope,
+      incomes,
+      expenses,
+    );
+  }
+
+  async getMonthlySummaryRange(
+    boardId: string,
+    startYearMonth: string,
+    monthsCount: number,
+    userId: string,
+  ): Promise<MonthlyBoardSummary[]> {
+    await this.participantsService.ensureParticipantAccess(boardId, userId);
+    const scope = await this.boardsService.findExpenseScopeContext(
+      boardId,
+      userId,
+    );
+    const board = scope[0].board;
+    const months = Array.from({ length: monthsCount }, (_, index) =>
+      shiftYearMonth(startYearMonth, index),
+    );
+    const from = new Date(parseYearMonth(startYearMonth).from);
+    const to = new Date(parseYearMonth(months[months.length - 1]).toExclusive);
+    const [incomes, expenses] = await Promise.all([
+      this.incomeModel
+        .find({
+          tripId: new Types.ObjectId(boardId),
+          incomeDate: { $gte: from, $lt: to },
+          skippedAt: { $exists: false },
+          $or: [
+            { recurringIncomeId: { $exists: false } },
+            { status: IncomeStatus.CONFIRMED },
+          ],
+        })
+        .lean(),
+      this.expenseModel
+        .find({
+          tripId: { $in: scope.map((item) => item.board._id) },
+          paymentYearMonth: {
+            $gte: startYearMonth,
+            $lte: months[months.length - 1],
+          },
+          skippedAt: { $exists: false },
+          $or: [
+            { recurringExpenseId: { $exists: false } },
+            { status: ExpenseStatus.PAID },
+          ],
+        })
+        .lean(),
+    ]);
+    const incomesByMonth = new Map<string, Income[]>();
+    const expensesByMonth = new Map<string, Expense[]>();
+    for (const income of incomes) {
+      const month = yearMonthFromUtcDate(new Date(income.incomeDate));
+      const items = incomesByMonth.get(month) ?? [];
+      items.push(income);
+      incomesByMonth.set(month, items);
+    }
+    for (const expense of expenses) {
+      const month = expense.paymentYearMonth!;
+      const items = expensesByMonth.get(month) ?? [];
+      items.push(expense);
+      expensesByMonth.set(month, items);
+    }
+    return months.map((month) =>
+      this.summarizeMonthly(
+        boardId,
+        month,
+        board.baseCurrency ?? DEFAULT_CURRENCY,
+        board.type,
+        scope,
+        incomesByMonth.get(month) ?? [],
+        expensesByMonth.get(month) ?? [],
+      ),
+    );
+  }
+
+  private summarizeMonthly(
+    boardId: string,
+    yearMonth: string,
+    boardCurrency: string,
+    boardType: BoardType,
+    expenseScope: Array<{
+      board: { _id: Types.ObjectId; type: BoardType };
+      participantId: Types.ObjectId;
+    }>,
+    incomes: Income[],
+    expenses: Expense[],
+  ): MonthlyBoardSummary {
     const incomeTotals = new CurrencyBreakdownBuilder();
     for (const income of incomes) {
       incomeTotals.add(income.currency, income.amount);
@@ -278,7 +394,7 @@ export class IncomesService {
     for (const sourceExpense of expenses) {
       const sourceBoardId = sourceExpense.tripId?.toString() ?? boardId;
       const inheritedTravel =
-        board.type === BoardType.EVERYDAY &&
+        boardType === BoardType.EVERYDAY &&
         typeByBoardId.get(sourceBoardId) === BoardType.TRAVEL;
       const attributedAmount = inheritedTravel
         ? getPersonalExpenseAmount(

@@ -219,9 +219,14 @@ export class GoalsService {
       priority: topGoal.priority,
     };
 
-    const { plannerResult } = await this.evaluateGoals(userId, board, [
-      topGoal,
-    ]);
+    const { plannerResult, monthlyCapacity: capacity } =
+      await this.evaluateGoals(
+        userId,
+        board,
+        [topGoal],
+        undefined,
+        Math.max(1, monthsBetweenYearMonths(currentYearMonth, yearMonth) + 1),
+      );
     const result = plannerResult.goals[0];
     const requiredMonthlyContribution =
       result.requiredMonthlyContributionIndividual ??
@@ -295,17 +300,6 @@ export class GoalsService {
         };
       }
     }
-
-    const monthsCount = Math.max(
-      1,
-      monthsBetweenYearMonths(currentYearMonth, yearMonth) + 1,
-    );
-    const capacity = await this.buildCapacitySeries(
-      board._id.toString(),
-      userId,
-      currentYearMonth,
-      monthsCount,
-    );
 
     // Mirrors GoalsPlannerService.simulateWaterfall exactly, so this number
     // always agrees with estimatedCompletionYearMonthJoint above: a month's
@@ -638,9 +632,11 @@ export class GoalsService {
     board: BoardDocument,
     goals: LeanGoal[],
     selectionsOverride?: Record<string, LeanSelection[]>,
+    minimumMonths = 1,
   ): Promise<{
     plannerResult: PlannerResult;
     selectionsByGoal: Map<string, LeanSelection[]>;
+    monthlyCapacity: Array<{ yearMonth: string; projectedRemaining: number }>;
   }> {
     const goalIds = goals.map((g) => g._id);
     const fetchedSelections = goalIds.length
@@ -683,7 +679,10 @@ export class GoalsService {
     );
 
     const currentYearMonth = getCurrentYearMonth();
-    const neededMonths = this.resolveNeededMonths(goals, currentYearMonth);
+    const neededMonths = Math.max(
+      minimumMonths,
+      this.resolveNeededMonths(goals, currentYearMonth),
+    );
     const monthlyCapacity = await this.buildCapacitySeries(
       board._id.toString(),
       userId,
@@ -751,6 +750,7 @@ export class GoalsService {
     return {
       plannerResult: this.planner.evaluate(plannerInput),
       selectionsByGoal,
+      monthlyCapacity,
     };
   }
 

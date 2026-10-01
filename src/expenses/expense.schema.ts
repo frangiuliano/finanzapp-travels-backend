@@ -218,6 +218,7 @@ ExpenseSchema.index({ tripId: 1, expenseDate: -1 });
 // by tripId + paymentYearMonth; without this compound index that filter
 // degrades to a collection scan as the number of expenses grows.
 ExpenseSchema.index({ tripId: 1, paymentYearMonth: 1 });
+ExpenseSchema.index({ tripId: 1, paymentYearMonth: 1, createdAt: -1, _id: -1 });
 ExpenseSchema.index(
   { budgetId: 1 },
   { partialFilterExpression: { budgetId: { $exists: true } } },

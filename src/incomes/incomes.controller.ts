@@ -82,6 +82,23 @@ export class IncomesController {
     return { incomes };
   }
 
+  @Get('recent')
+  async findRecent(
+    @Query('boardId') boardId: string,
+    @Query('yearMonth') yearMonth: string,
+    @GetUser() user: UserDocument,
+  ) {
+    if (!boardId || !yearMonth)
+      throw new BadRequestException('boardId y yearMonth son requeridos');
+    return {
+      incomes: await this.incomesService.findRecentByMonth(
+        boardId,
+        user._id.toString(),
+        yearMonth,
+      ),
+    };
+  }
+
   @Get(':id')
   async findOne(@Param('id') id: string, @GetUser() user: UserDocument) {
     const income = await this.incomesService.findOne(id, user._id.toString());
