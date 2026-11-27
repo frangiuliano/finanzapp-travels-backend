@@ -50,7 +50,10 @@ import {
   resolveAmountForYearMonth,
   RecurringEscalation,
 } from '../common/utils/resolve-recurring-amount';
-import { getValidDaysInMonth } from '../common/utils/validate-day-of-month';
+import {
+  getValidDaysInMonth,
+  getOccurrenceDayInMonth,
+} from '../common/utils/validate-day-of-month';
 import {
   getCurrentYearMonth,
   shiftYearMonth,
@@ -699,10 +702,7 @@ export class RecurringMaterializationService {
       );
       if (amount == null) return 0;
 
-      const validDays = getValidDaysInMonth([rule.dayOfMonth], yearMonth);
-      if (validDays.length === 0) return 0;
-
-      const day = validDays[0];
+      const day = getOccurrenceDayInMonth(rule.dayOfMonth, yearMonth);
       const occurrenceKey = `re:${rule._id.toString()}:${yearMonth}:${day}`;
       if (existingKeys.has(occurrenceKey)) return 0;
 
@@ -880,6 +880,58 @@ export class RecurringMaterializationService {
         expense.amount = amount;
         await expense.save();
       }
+    }
+  }
+
+  /**
+   * Called when a rule's currency changes. Already-materialized pending
+   * occurrences keep whatever currency they were created with, so they're
+   * updated here (recomputing FX against the board currency) from the
+   * current month forward. Paid history is untouched.
+   */
+  async syncPendingExpenseCurrencyFromMonth(
+    recurringExpenseId: string,
+    newCurrency: string,
+  ): Promise<void> {
+    const rule = await this.recurringExpenseModel.findById(recurringExpenseId);
+    if (!rule) return;
+
+    const pending = await this.expenseModel.find({
+      recurringExpenseId: rule._id,
+      status: ExpenseStatus.PENDING,
+      skippedAt: { $exists: false },
+      expenseDate: { $gte: buildOccurrenceDate(getCurrentYearMonth(), 1) },
+    });
+    if (pending.length === 0) return;
+
+    const board = await this.boardsService.findByIdOrFail(
+      rule.tripId.toString(),
+    );
+    const boardCurrency = board.baseCurrency ?? DEFAULT_CURRENCY;
+
+    const fxOnCreate = this.expenseFxResolver.buildFxOnCreate({
+      expenseCurrency: newCurrency,
+      boardCurrency,
+    });
+
+    let fxRateToBoardCurrency: number | undefined;
+    let fxCapturedAt: Date | undefined;
+    if (fxOnCreate?.fxPolicy === ExpenseFxPolicy.SPOT) {
+      const snapshot = await this.expenseFxResolver.resolveSpotSnapshot(
+        newCurrency,
+        boardCurrency,
+      );
+      fxRateToBoardCurrency = snapshot.fxRateToBoardCurrency;
+      fxCapturedAt = snapshot.fxCapturedAt;
+    }
+
+    for (const expense of pending) {
+      expense.currency = newCurrency;
+      expense.fxPolicy = fxOnCreate?.fxPolicy;
+      expense.fxPurpose = fxOnCreate?.fxPurpose;
+      expense.fxRateToBoardCurrency = fxRateToBoardCurrency;
+      expense.fxCapturedAt = fxCapturedAt;
+      await expense.save();
     }
   }
 

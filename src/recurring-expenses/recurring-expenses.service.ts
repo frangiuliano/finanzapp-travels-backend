@@ -166,6 +166,8 @@ export class RecurringExpensesService {
       );
     }
 
+    const currencyChanged =
+      updateDto.currency !== undefined && updateDto.currency !== item.currency;
     if (updateDto.currency !== undefined) item.currency = updateDto.currency;
     if (updateDto.label !== undefined) item.label = updateDto.label.trim();
     if (updateDto.description !== undefined) {
@@ -248,6 +250,13 @@ export class RecurringExpensesService {
       await this.materializationService.syncPendingExpenseAmountsFromMonth(
         id,
         getCurrentYearMonth(),
+      );
+    }
+
+    if (currencyChanged) {
+      await this.materializationService.syncPendingExpenseCurrencyFromMonth(
+        id,
+        item.currency,
       );
     }
 
