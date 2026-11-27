@@ -35,3 +35,20 @@ export function getValidDaysInMonth(
 
   return daysOfMonth.filter((day) => day <= lastDay);
 }
+
+/**
+ * A single recurring occurrence (e.g. a fixed expense) must land every month,
+ * even when its configured day doesn't exist (e.g. 30 in February): it's
+ * clamped to that month's last day instead of being skipped.
+ */
+export function getOccurrenceDayInMonth(
+  dayOfMonth: number,
+  yearMonth: string,
+): number {
+  const [yearStr, monthStr] = yearMonth.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const lastDay = new Date(year, month, 0).getDate();
+
+  return Math.min(dayOfMonth, lastDay);
+}
