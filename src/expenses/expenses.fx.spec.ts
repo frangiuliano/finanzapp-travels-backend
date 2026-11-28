@@ -243,6 +243,64 @@ describe('ExpensesService FX snapshot', () => {
     );
   });
 
+  it('should recompute FX snapshot when currency changes on update', async () => {
+    boardsService.findByIdOrFail.mockResolvedValue({
+      _id: boardId,
+      type: BoardType.EVERYDAY,
+      baseCurrency: 'ARS',
+    });
+    participantModel.findOne.mockResolvedValue({ _id: participantId });
+
+    const capturedAt = new Date('2026-07-01T12:00:00.000Z');
+    expenseFxResolver.buildFxOnCreate.mockReturnValue({
+      fxPolicy: ExpenseFxPolicy.SPOT,
+      fxPurpose: ExpenseFxPurpose.SETTLED,
+    });
+    expenseFxResolver.resolveSpotSnapshot.mockResolvedValue({
+      fxRateToBoardCurrency: 1200,
+      fxCapturedAt: capturedAt,
+    });
+
+    const expenseDoc = {
+      _id: expenseId,
+      tripId: boardId,
+      amount: 10,
+      currency: 'ARS',
+      status: ExpenseStatus.PAID,
+      isDivisible: false,
+      splits: undefined,
+      description: 'Gasto en pesos',
+      save: jest.fn(),
+    };
+    expenseDoc.save.mockImplementation(() => Promise.resolve(expenseDoc));
+
+    expenseModel.findById
+      .mockResolvedValueOnce(expenseDoc)
+      .mockReturnValueOnce({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({ ...expenseDoc }),
+      });
+
+    await service.update(expenseId.toString(), { currency: 'USD' }, userId);
+
+    expect(expenseFxResolver.buildFxOnCreate).toHaveBeenCalledWith({
+      expenseCurrency: 'USD',
+      boardCurrency: 'ARS',
+    });
+    expect(expenseFxResolver.resolveSpotSnapshot).toHaveBeenCalledWith(
+      'USD',
+      'ARS',
+      undefined,
+    );
+    expect(expenseDoc).toMatchObject({
+      currency: 'USD',
+      fxRateToBoardCurrency: 1200,
+      fxCapturedAt: capturedAt,
+      fxPolicy: ExpenseFxPolicy.SPOT,
+      fxPurpose: ExpenseFxPurpose.SETTLED,
+    });
+  });
+
   it('should reject cross-currency expense when FX cannot be resolved', async () => {
     boardsService.findByIdOrFail.mockResolvedValue({
       _id: boardId,

@@ -48,6 +48,11 @@ export class UpdateExpenseDto {
   currency?: string;
 
   @IsOptional()
+  @IsNumber({}, { message: 'El tipo de cambio debe ser un número' })
+  @Min(0.000001, { message: 'El tipo de cambio debe ser mayor a 0' })
+  fxRateOverride?: number;
+
+  @IsOptional()
   @IsString({ message: 'La descripción debe ser texto' })
   @MaxLength(500, {
     message: 'La descripción no puede tener más de 500 caracteres',
