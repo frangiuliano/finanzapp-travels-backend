@@ -1173,11 +1173,45 @@ export class ExpensesService implements OnModuleInit {
     const updateFields = Object.fromEntries(
       Object.entries(updateExpenseDto).filter(
         ([key, value]) =>
-          key !== 'tripId' && key !== 'boardId' && value !== undefined,
+          key !== 'tripId' &&
+          key !== 'boardId' &&
+          key !== 'fxRateOverride' &&
+          value !== undefined,
       ),
     );
     updateFields.amount = newAmount;
     updateFields.isRefund = effectiveIsRefund;
+
+    // Changing currency leaves the old FX snapshot stale (it was captured
+    // for the previous currency pair), so it's recomputed the same way a
+    // newly created expense would resolve it.
+    const currencyChanged =
+      updateExpenseDto.currency !== undefined &&
+      updateExpenseDto.currency !== expense.currency;
+    if (currencyChanged) {
+      const fxOnUpdate = this.expenseFxResolver.buildFxOnCreate({
+        expenseCurrency: updateExpenseDto.currency!,
+        boardCurrency,
+      });
+
+      updateFields.fxPolicy = fxOnUpdate?.fxPolicy;
+      updateFields.fxPurpose = fxOnUpdate?.fxPurpose;
+      updateFields.fxRateToBoardCurrency = undefined;
+      updateFields.fxCapturedAt = undefined;
+
+      if (fxOnUpdate?.fxPolicy === ExpenseFxPolicy.SPOT) {
+        const snapshot = await this.expenseFxResolver.resolveSpotSnapshot(
+          updateExpenseDto.currency!,
+          boardCurrency,
+          updateExpenseDto.fxRateOverride,
+        );
+        updateFields.fxRateToBoardCurrency = snapshot.fxRateToBoardCurrency;
+        updateFields.fxCapturedAt = snapshot.fxCapturedAt;
+      } else if (updateExpenseDto.fxRateOverride !== undefined) {
+        updateFields.fxRateToBoardCurrency = updateExpenseDto.fxRateOverride;
+        updateFields.fxCapturedAt = new Date();
+      }
+    }
 
     const originalAmountForOverride = expense.amount;
     const originalDescriptionForOverride = expense.description;
